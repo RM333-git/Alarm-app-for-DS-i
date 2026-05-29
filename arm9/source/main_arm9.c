@@ -1,0 +1,1000 @@
+#include <nds.h>
+#include <stdio.h>
+#include <time.h>
+#include <calico.h>
+#include <maxmod9.h>
+#include <fat.h>
+#include <../../ipc.h>
+#include "soundbank.h"
+#include "soundbank_bin.h"
+
+// #include "n09.h"
+#include "n09_bk.h"
+#include "ascii_small_bk.h"
+// #include "batt_bg.h"
+// #include "batt_stat.h"
+#include "batt_bg_bk.h"
+#include "batt_stat_bk.h"
+#include "lowerBg_bk.h"
+#include "ringing_window_bk.h"
+#include "snooze_window_bk.h"
+#include "selection.h"
+// #include "up_tri_bk.h"	// 背景作成用
+// #include "button_bk.h"
+// #include "bg_bk.h"
+// #include "bg_bar_bk.h"
+
+// pxiSendAndReceiveでやりとりできるのは26bitまで
+// oamsetのスプライトidは[0 - 127]（mainとsub共通）
+
+// sprite IDs
+// Upper screen
+// 0-4	: big clock (colon:2)
+// 5-16	: alarm
+// 17-28	: snooze
+// 29-45?3	: date
+// 46-50	: battery
+// Lower screen
+// 51-86	: alarm 0-2 strings (12 chars each)
+// 87	: alarm sound num
+// 88-94	: long press progress
+// 95	: selection
+
+// save file name
+static char saveFileName[] = "alarmApp.sav";
+
+// for emulator
+// #define EMU
+
+u32 debug = 0;
+u32 test;
+static volatile u32 recvTest = 0;
+static volatile int frame = 0;
+// static volatile int timer0 = 0;
+
+static volatile IpcStruct* IPC;
+static IpcStruct mIPC __attribute__((aligned(32)));
+
+#define SEL_MAX 16
+static volatile int sel = 0;
+static volatile int keyWaitNum = 10;
+static volatile int numModWait = 7;
+bool noAlarmSet = false;
+
+// alarm variable
+static u8 almIsOn;
+static u8 almHour;
+static u8 almMin;
+static u8 almSel = 255;	// alarm element index (unselect:255)
+static bool waitSnooze = false;	// wait for snooze
+static bool snoozeHold = false;	// holding for reset snooze
+static int seNum = 0;	// alarm SE number (SFX_CLOCK_ALARM02_LOUD, SFX_ALARM2_CONTINUOUS, SFX_TOKEI_NADONO_ALARM)
+static const int seNumLen = 2;
+
+// current time variable
+static u8 h;
+static u8 m;
+static u8 s;
+static u16 year;
+static u8 month;
+static u8 day;
+static u8 week;
+
+#define VOL_MAX 31
+static u8 prev_vol;	// 今の音量を保持する用
+
+static u8 prev_h;	// 表示のトリガー用
+static u8 prev_m;	// 表示のトリガー用
+// static u8 prev_s;	// 表示のトリガー用
+static u8 prev_day;	// 表示のトリガー用
+static u8 prev_almIsOn;	// 表示のトリガー用
+static u8 prev_almHour;	// 表示のトリガー用
+static u8 prev_almMin;	// 表示のトリガー用
+static bool prev_snoozeOn;	// 表示のトリガー用
+static u8 prev_snoozeMin;	// 表示のトリガー用
+static const char weekStrArr[][4] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+
+#define ELEM_MAX 3
+#define SNOOZE_DEFAULT 10
+#define SNOOZE_MAX 60
+#define UNSNOOZE_FRAME 180	// max:255(because u8)
+#define MIN_OF_DAY (24*60)
+static volatile struct AlarmElem {
+	u8 hour;
+	u8 min;
+	u8 snoozeMin;
+	// u8 seNum??
+	bool isOn;
+	bool snoozeOn;
+} alm[ELEM_MAX];
+static u8 unsnoozeCounter = 0;
+
+#define SPRITE_DEP 0	// 上画面スプライトの深度
+// #define SPRITE_DEP_SUB 1	// 下画面スプライトの深度	// now not use
+#define NUM_GFX_OFFSET (64*64/2/2)
+#define SMALL_GFX_OFFSET (16*16/2/2)
+u16* clockGfx;
+u16* smallGfx;
+u16* battBgGfx;
+u16* battStatGfx;
+u16* triGfx;
+u16* buttonGfx;
+u16* smallGfxSub;
+// u16* smallGfxSub[43];
+u16* selectionGfxSub;
+int battStartId, battX, battY;
+// マクロでアドレス計算を共通化
+#define SPRITE_PAL(idx) (SPRITE_PALETTE + ((idx) * 16))
+#define SPRITE_PAL_SUB(idx) (SPRITE_PALETTE_SUB + ((idx) * 16))
+#define BG_PAL(idx) (BG_PALETTE + ((idx) * 16))
+#define BG_PAL_SUB(idx) (BG_PALETTE_SUB + ((idx) * 16))
+// #define bgGetGfxPtr_id(bg,idx) (bgGetGfxPtr(bg) + ((idx) * 16))
+// #define bgGetMapPtr_id(bg,idx) (bgGetMapPtr(bg) + ((idx) * 32 * 32))
+enum SPRITE_PAL_ID {
+	id_n09,
+	id_ascii_small,
+	id_batt_bg,
+	id_batt_stat
+};
+enum SPRITE_PAL_SUB_ID {
+	id_ascii_small_sub,
+	id_selection,
+	id_up_tri,
+	id_button
+};
+enum BG_PALETTE_SUB_ID {
+	// id_bg_bk,
+	// id_bg_bar_bk,
+	id_lowerBg,
+	id_ringing_window,
+	id_snooze_window
+};
+// コロンの点滅調整値
+#define COLON_ON_TIME 60
+#define COLON_PERIOD 120
+static volatile int colonCounter = 0;
+int startId, startId2;	// alarm & snooze gfx start index
+// 下画面の表示用など
+u16* mapPtr;
+int colSpanY = 56;
+#define TOUCH_AREA_MAX 25
+static volatile struct touchAreaStruct {
+	u8 x;
+	u8 y;
+	u8 w;
+	u8 h;
+} touchArea[TOUCH_AREA_MAX];
+#define SELECTION_SPRITE_ID 95
+
+u8 hourCalc(u8 hour, int add)
+{
+	int result = (int)hour + add;
+	if (result >= 24) result = 0;
+	else if (result < 0) result = 23;
+	return (u8)result;
+}
+u8 minCalc(u8 min, int add)
+{
+	int result = (int)min + add;
+	if (result >= 60) result = 0;
+	else if (result < 0) result = 59;
+	return (u8)result;
+}
+void getTime() {
+	time_t timer = time(NULL);
+	struct tm *tm = localtime(&timer);
+	if(tm != NULL) {
+		// int tm_sec;   /* 秒(0～59) */
+		// int tm_min;   /* 分(0～59) */
+		// int tm_hour;  /* 時(0～59) */
+		// int tm_mday;  /* 日(1～31) */
+		// int tm_mon;   /* 月(0～11) */
+		// int tm_year;  /* 1900年からの年 */
+		// int tm_wday;  /* 日曜日からの日数(0～6) */
+		// int tm_yday;  /* 1月1日からの日数(0～365) */
+		// int tm_isdst; /* 夏時間フラグ(採用:>0,不採用:0,不明:<0)  */
+		h = tm->tm_hour;
+		m = tm->tm_min;
+		s = tm->tm_sec;
+		year = tm->tm_year+1900;
+		month = tm->tm_mon+1;
+		day = tm->tm_mday;
+		week = tm->tm_wday;
+	}
+}
+void almInit(void) {
+	for(int i=0; i<ELEM_MAX; i++) {
+		alm[i].isOn = false;
+		alm[i].snoozeOn = false;
+		alm[i].hour = 0;
+		alm[i].min = 0;
+		alm[i].snoozeMin = SNOOZE_DEFAULT;
+	}
+}
+void writeSave(char* fname, void *data, size_t size) {
+	FILE *file = fopen(fname, "wb"); // バイナリ書き込みモード
+	if (file) {
+		fwrite(data, size, 1, file);
+		fclose(file);
+	}
+}
+void loadSave(char* fname, void *data, size_t size) {
+	FILE *file = fopen(fname, "rb"); // バイナリ読み込みモード
+	if (file) {
+		fread(data, size, 1, file);
+		fclose(file);
+	} else {	// first time load save
+		almInit();
+	}
+}
+
+inline void drawClockNum(int id, int n, int x, int y)
+{
+	oamSet(&oamMain, 
+		id,               // スプライトID
+		x, y,            // 表示座標
+		SPRITE_DEP,               // 優先度
+		id_n09,               // パレットインデックス
+		SpriteSize_64x64, 
+		SpriteColorFormat_16Color, 
+		clockGfx+n*NUM_GFX_OFFSET,             // 転送したデータの場所
+		-1, false, false, false, false, false);
+}
+void drawCharSmall(int id, int x, int y, char* str, size_t strLen)
+{
+	int n, sum = 0;
+	u8 span;
+	for (int i=0;i<strLen;i++) {
+		span = 11;
+		n = str[i];
+		if ((i == strLen-1) && (n == 0)) break;	// NULL(End of strings)
+		if (n==' ') {sum += span; oamClearSprite(&oamMain, id+i); continue;}	// space
+		else if (n=='/') {n = ';'; span -= 2;}	// replace character
+		else if (n=='(') {n = '?'; span -= 3;}	// replace character
+		else if (n==')') {n = '@'; span -= 3;}	// replace character
+		else if ((n>='0') && (n<=';')) span -= 1;	// 0-9
+		else if ((n=='I')) {span -= 4;}
+		else if ((n=='O')||(n=='Q')) {sum += 1; span += 1;}
+		else if ((n=='M')) {sum += 2; span += 1;}
+		else if ((n=='W')) {sum += 2; span += 2;}
+		n -= 48;
+		if ((n<0)) n = 0;	// 最大値も設定する!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		oamSet(&oamMain, 
+			id+i,               // スプライトID
+			x+sum, y,            // 表示座標
+			SPRITE_DEP,               // 優先度
+			id_ascii_small,               // パレットインデックス
+			SpriteSize_16x16, 
+			SpriteColorFormat_16Color, 
+			smallGfx+n*SMALL_GFX_OFFSET,             // 転送したデータの場所
+			-1, false, false, false, false, false);
+		sum += span;
+	}
+}
+void drawCharSmallSub(int id, int x, int y, char* str, size_t strLen, u8 priority)
+{
+	int n, sum = 0;
+	u8 span;
+	for (int i=0;i<strLen;i++) {
+		span = 11;
+		n = str[i];
+		if ((i == strLen-1) && (n == 0)) break;	// NULL(End of strings)
+		if (n==' ') {sum += span; oamClearSprite(&oamSub, id+i); continue;}	// space
+		else if (n=='/') {n = ';'; span -= 2;}	// replace character
+		else if (n=='(') {n = '?'; span -= 3;}	// replace character
+		else if (n==')') {n = '@'; span -= 3;}	// replace character
+		else if ((n>='0') && (n<=';')) span -= 1;	// 0-9
+		else if ((n=='I')) {span -= 4;}
+		else if ((n=='O')||(n=='Q')) {sum += 1; span += 1;}
+		else if ((n=='M')) {sum += 2; span += 1;}
+		else if ((n=='W')) {sum += 2; span += 2;}
+		n -= 48;
+		if ((n<0)) n = 0;	// 最大値も設定する!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		oamSet(&oamSub, 
+			id+i,               // スプライトID
+			x+sum, y,            // 表示座標
+			priority,               // 優先度
+			id_ascii_small_sub,               // パレットインデックス
+			SpriteSize_16x16, 
+			SpriteColorFormat_16Color, 
+			smallGfxSub+n*SMALL_GFX_OFFSET,             // 転送したデータの場所
+			// smallGfxSub[n],             // 転送したデータの場所
+			-1, false, false, false, false, false);
+		sum += span;
+	}
+}
+void drawBattStat(u8 statNum)
+{
+	if (statNum == 0) {
+		oamSet(&oamMain, 
+			battStartId+4,               // スプライトID
+			battX, battY,            // 表示座標
+			SPRITE_DEP,               // 優先度
+			id_batt_bg,               // パレットインデックス
+			SpriteSize_64x32, 
+			SpriteColorFormat_16Color, 
+			battBgGfx,             // 転送したデータの場所
+			-1, false, false, false, false, false);
+		return;
+	}
+	u8 i = 0;
+	for (int level=3;level<16;level+=4) {
+		if (statNum >= level){
+			u8 offset = 10*(3-i)+5;
+			u8 gfxOffset = 128;
+			if (i == 3) {offset = 0; gfxOffset = 0;}
+			oamSet(&oamMain, 
+				battStartId+i,               // スプライトID
+				battX+offset+2, battY,            // 表示座標
+				SPRITE_DEP,               // 優先度
+				id_batt_stat,               // パレットインデックス
+				SpriteSize_16x32, 
+				SpriteColorFormat_16Color, 
+				battStatGfx+gfxOffset,             // 転送したデータの場所
+				-1, false, false, false, false, false);
+		} else
+			oamClearSprite(&oamMain, battStartId+i);
+		i++;
+	}
+}
+void drawSelection(int x, int y, s16 scale, u8 priority)
+{
+	int matrix_id = 0;
+	oamSet(&oamSub, 
+		SELECTION_SPRITE_ID,               // スプライトID
+		x-16, y-8,            // 表示座標
+		priority,               // 優先度
+		id_selection,               // パレットインデックス
+		SpriteSize_32x16, 
+		SpriteColorFormat_16Color, 
+		selectionGfxSub,             // 転送したデータの場所
+		matrix_id, true, false, false, false, false);
+	// アフィン行列の計算 scaleが2.0なら、1/2.0 = 0.5。 0.5 * 256 = 128 を設定する
+	s16 fixed_scale = (s16)(256.0f / scale);
+	// 行列レジスタに書き込み pa = x軸倍率, pd = y軸倍率, pb/pc = 回転/歪み
+	oamAffineTransformation(&oamSub, 
+							matrix_id, 
+							fixed_scale, 0, 
+							0, fixed_scale);
+}
+
+void searchNearAlmSend(void)
+{
+	bool anyAlarm = false;
+	// search nearest alarm
+	u8 nearestInd = 255;	// exception:alarm isnt set
+	int now = h*60 + m;
+	int nearest = MIN_OF_DAY+1;
+	int snoozeM = SNOOZE_MAX;
+	for (int i=0; i<ELEM_MAX; i++) {
+		if (alm[i].isOn) {
+			int comp = alm[i].hour*60 + alm[i].min - now;
+			if (comp <= 0) comp += MIN_OF_DAY;
+			if (comp < nearest) {nearest = comp; nearestInd = i; snoozeM = alm[i].snoozeOn ? alm[i].snoozeMin : SNOOZE_MAX;}
+			else if ((comp == nearest) && alm[i].snoozeOn && (alm[i].snoozeMin < snoozeM)) {nearest = comp; nearestInd = i; snoozeM = alm[i].snoozeMin;}
+			anyAlarm = true;
+		}
+	}
+	// alarm set/unset
+	u32 data;
+	// DC_FlushRange(&mIPC, sizeof(mIPC));	// IPC isn't used here anymore
+	if (anyAlarm) {	// set
+		u8 hour = alm[nearestInd].hour;
+		u8 min = alm[nearestInd].min;
+		u8 ampm = hour/12;
+		data = ((alm[nearestInd].isOn & 1U)<< MODE_SHIFT_NUM) | encodeBcd(min)<<16 | encodeBcd(hour)<<8 | ((ampm & 1U)<< AMPM_BIT_NUM) | ALARM_COMPARE_ENABLE;
+	} else {	// unset
+		data = 0;
+		prev_snoozeOn = almSel==255 ? false : !alm[almSel].snoozeOn;
+		prev_snoozeMin = 255;
+	}
+	u32 ret = (u32)(0xfffffff);
+	if (!(data == 0 && almIsOn == 0)) {		// except for no alarm and not set alarm now
+		pxiSendAndReceive(PxiChannel_User0, 0);		// important for write 0 to status2 register to reset IF flag(maybe)
+		ret = pxiSendAndReceive(PxiChannel_User0, data);
+	}
+	// DC_InvalidateRange(&mIPC, sizeof(mIPC));	// IPC isn't used here anymore
+	if (ret != data) {
+		// not succeeded
+	} else {
+		// decode and preserve data
+		almIsOn = (ret >> MODE_SHIFT_NUM) & 1U;
+		almHour = decodeBcd((ret >> 8) & 0x3f);
+		almMin = decodeBcd((ret >> 16) & 0x7f);
+		almSel = nearestInd;
+	}
+	recvTest = ret;
+}
+bool checkValidSnooze(int min)	// for snooze
+{
+	// check snooze valid
+	int now = h*60 + m;
+	int tempAlm = almHour*60 + almMin + min;
+	int diff = (tempAlm - now + MIN_OF_DAY) % MIN_OF_DAY;	// calc difference clockwise
+	if (diff > 0 && diff <= SNOOZE_MAX) {return true;}
+	return false;
+}
+void addMinAndSend(int min)	// for snooze
+{
+	// add minute
+	u8 carry = 0;
+	almMin += min;
+	if (almMin >= 60) {almMin -= 60; carry = 1;}
+	almHour += carry;
+	if (almHour >= 24) {almHour -= 24;}
+	// set snooze
+	pxiSendAndReceive(PxiChannel_User0, 0);		// important for write 0 to status2 register to reset IF flag(maybe)
+	u8 ampm = almHour/12;
+	u32 data = (ALM_SET<< MODE_SHIFT_NUM) | encodeBcd(almMin)<<16 | encodeBcd(almHour)<<8 | ((ampm & 1U)<< AMPM_BIT_NUM) | ALARM_COMPARE_ENABLE;
+	u32 ret = pxiSendAndReceive(PxiChannel_User0, data);
+	if (ret != data) {
+		// not succeeded
+	} else {
+		// decode and preserve data
+		// almIsOn = (ret >> MODE_SHIFT_NUM) & 1U;
+		almHour = decodeBcd((ret >> 8) & 0x3f);
+		almMin = decodeBcd((ret >> 16) & 0x7f);
+		// almSel = nearestInd;
+	}
+	recvTest = ret;
+}
+inline bool my_pmMainLoop() {
+	return !noAlarmSet ? pmMainLoop() : true;
+}
+//---------------------------------------------------------------------------------
+int main(void) {
+//---------------------------------------------------------------------------------
+	touchPosition touch;
+
+	consoleDemoInit();  //setup the sub screen for printing
+
+	// IPC init
+	mIPC.counter = 0;
+	mIPC.data = 0;
+	mIPC.almState = None;
+	IPC = &mIPC;
+
+	// send
+	pxiWaitRemote(PxiChannel_User0);	// これは1回だけ呼べばいい？
+	DC_FlushRange(&mIPC, sizeof(mIPC));
+	// u32 ret = pxiSendAndReceive(PxiChannel_User0, (u32)IPC);
+	pxiSendAndReceive(PxiChannel_User0, (u32)IPC);
+
+	// initialize needed
+	mmInitDefaultMem((mm_addr)soundbank_bin);
+
+	// load sound effects
+	// mmLoadEffect( SFX_CLOCK_ALARM02_LOUD );
+	// mmLoadEffect( SFX_ALARM2_CONTINUOUS );
+	// mmLoadEffect( SFX_TOKEI_NADONO_ALARM );
+	for (int i=0;i<seNumLen;i++) {
+		mmLoadEffect(i);
+	}
+	// sound effect handle (for cancelling it later)
+	mm_sfxhand amb = 0;
+
+#ifndef EMU
+	if (fatInitDefault()) {
+		iprintf("\x1b[14;0HfatInitDefault OK\n");
+		// alarm elements initialize (from save file point!!!!!!!!!!!!!!!!!!!!!!)
+		loadSave(saveFileName, (void *)alm, sizeof(alm));
+	} else {
+		iprintf("\x1b[14;0HfatInitDefault failure\n");
+	}
+#else
+	almInit();
+#endif
+	getTime();	// because searchNearAlmSend uses current time internally
+	searchNearAlmSend();	// initialize alm var
+	prev_h = 255;	// to display first time
+	prev_m = 255;	// to display first time
+	prev_day = 255;	// to display first time
+	prev_almIsOn = false;	// to display first time if set
+	prev_almHour = almHour;
+	prev_almMin = almMin;
+	prev_snoozeOn = almSel==255 ? false : alm[almSel].snoozeOn;
+	prev_snoozeMin = 255;
+	// prev_snoozeMin = almSel==255 ? 255 : alm[almSel].snoozeMin;	// 動作大丈夫だったら消す！！！！！！！！！！
+
+	// draw upper screen
+	videoSetMode(MODE_0_2D | DISPLAY_SPR_ACTIVE);
+	// VRAMをスプライト用に設定
+	vramSetBankA(VRAM_A_MAIN_SPRITE);
+	// vramSetPrimaryBanks(VRAM_A_MAIN_SPRITE, VRAM_B_MAIN_BG, VRAM_C_SUB_BG, VRAM_D_SUB_SPRITE);
+	// スプライトメモリの初期化
+	oamInit(&oamMain, SpriteMapping_1D_128, false);
+	// oamInit(&oamMain, SpriteMapping_1D_256, false);
+	// サブエンジン（下）の設定
+	videoSetModeSub(MODE_0_2D | DISPLAY_SPR_ACTIVE);
+	vramSetBankC(VRAM_C_SUB_BG);
+	vramSetBankD(VRAM_D_SUB_SPRITE);
+	vramSetBankI(VRAM_I_SUB_SPRITE_EXT_PALETTE);
+	oamInit(&oamSub, SpriteMapping_1D_128, false);
+	// VRAMに画像データを転送　allocateの空回しはホントは良くない（前のメモリ配置次第で飛び地になるから）（アドレスを配列などで保持して使うほうが良い）
+	clockGfx = oamAllocateGfx(&oamMain, SpriteSize_64x64, SpriteColorFormat_16Color);	// 64x64の領域11個分確保する（1つ目）
+	for (int i=0;i<10;i++){		// 64x64の領域を残り10個分確保する
+		oamAllocateGfx(&oamMain, SpriteSize_64x64, SpriteColorFormat_16Color);
+	}
+	dmaCopy(n09_bkTiles, clockGfx, n09_bkTilesLen);
+	dmaCopy(n09_bkPal, SPRITE_PAL(id_n09), n09_bkPalLen);	
+	smallGfx = oamAllocateGfx(&oamMain, SpriteSize_16x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）
+	for (int i=0;i<42;i++){		// 16x16の領域を残り42個分確保する
+		oamAllocateGfx(&oamMain, SpriteSize_16x16, SpriteColorFormat_16Color);
+	}
+	dmaCopy(ascii_small_bkTiles, smallGfx, ascii_small_bkTilesLen);
+	dmaCopy(ascii_small_bkPal, SPRITE_PAL(id_ascii_small), ascii_small_bkPalLen);	
+
+	// battery mark prepare and draw batt_bg
+	battBgGfx = oamAllocateGfx(&oamMain, SpriteSize_64x32, SpriteColorFormat_16Color);
+	dmaCopy(batt_bg_bkTiles, battBgGfx, batt_bg_bkTilesLen);
+	dmaCopy(batt_bg_bkPal, SPRITE_PAL(id_batt_bg), batt_bg_bkPalLen);	
+	battStatGfx = oamAllocateGfx(&oamMain, SpriteSize_16x32, SpriteColorFormat_16Color);
+	oamAllocateGfx(&oamMain, SpriteSize_16x32, SpriteColorFormat_16Color);	// 2つあるので空呼び
+	dmaCopy(batt_stat_bkTiles, battStatGfx, batt_stat_bkTilesLen);
+	dmaCopy(batt_stat_bkPal, SPRITE_PAL(id_batt_stat), batt_stat_bkPalLen);	
+
+	int clockX = 15, clockY = 70;
+	u16 wid = 40, colonWid = 30;
+	battX = 200, battY = 155;
+	battStartId = 46;
+	drawBattStat(0);	// draw batt bg
+	// get battery level and draw
+	u8 battLevel = PM_BATT_LEVEL(pmGetBatteryState());
+	drawBattStat(battLevel);
+
+	// 下画面用のスプライト・背景の準備
+
+	// 文字表示用 allocateの空回しはホントは良くない（前のメモリ配置次第で飛び地になるから）（アドレスを配列などで保持して使うほうが良い）
+	// for (int i=0;i<43;i++) {		// 16x16の領域を43個分確保する	// 正統版
+	// 	smallGfxSub[i] = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）
+	// 	dmaCopy(ascii_small_bkTiles+i*(4*4*2), smallGfxSub[i], 16*16/2);
+	// }
+	smallGfxSub = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）（邪道版）
+	for (int i=0;i<42;i++)		// 16x16の領域を残り42個分確保する
+		oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);
+	dmaCopy(ascii_small_bkTiles, smallGfxSub, ascii_small_bkTilesLen);
+	dmaCopy(ascii_small_bkPal, SPRITE_PAL_SUB(id_ascii_small_sub), ascii_small_bkPalLen);	// これは共通
+	selectionGfxSub = oamAllocateGfx(&oamSub, SpriteSize_32x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）（邪道版）
+	dmaCopy(selectionTiles, selectionGfxSub, selectionTilesLen);
+	dmaCopy(selectionPal, SPRITE_PAL_SUB(id_selection), selectionPalLen);	// これは共通
+	// 下画面の背景を表示(レイヤー0(深度ではない))
+	int bg0sub = bgInitSub(0, BgType_Text4bpp, BgSize_T_256x256, 16, 0);	// mapBaseとtileBaseは衝突しないように
+	dmaCopy(lowerBg_bkTiles, bgGetGfxPtr(bg0sub), lowerBg_bkTilesLen);
+	dmaCopy(lowerBg_bkMap, bgGetMapPtr(bg0sub), lowerBg_bkMapLen);
+	dmaCopy(lowerBg_bkPal, BG_PAL_SUB(id_lowerBg), lowerBg_bkPalLen);
+	bgSetPriority(bg0sub, 2);	// 深度を2に
+	// ringing(レイヤー1(深度ではない))
+	int bgRinging = bgInitSub(1, BgType_Text4bpp, BgSize_T_256x256, 17, 1);	// mapBaseとtileBaseは衝突しないように
+	mapPtr = bgGetMapPtr(bgRinging);
+	dmaCopy(ringing_window_bkTiles, bgGetGfxPtr(bgRinging), ringing_window_bkTilesLen);
+	dmaCopy(ringing_window_bkMap, mapPtr, ringing_window_bkMapLen);
+	dmaCopy(ringing_window_bkPal, BG_PAL_SUB(id_ringing_window), ringing_window_bkPalLen);
+	for (int i = 0; i < 32 * 32; i++)
+		mapPtr[i] = (mapPtr[i] & 0x0FFF) | (id_ringing_window << 12); 	// モーダル用マップの各タイルにパレットスロットを指定する
+	bgSetPriority(bgRinging, 0);	// 深度を0に
+	bgHide(bgRinging);
+	// bgShow(bgRinging);
+	// snooze(レイヤー2(深度ではない))
+	int bgSnooze = bgInitSub(2, BgType_Text4bpp, BgSize_T_256x256, 18, 5);	// mapBaseとtileBaseは衝突しないように
+	mapPtr = bgGetMapPtr(bgSnooze);
+	dmaCopy(snooze_window_bkTiles, bgGetGfxPtr(bgSnooze), snooze_window_bkTilesLen);
+	dmaCopy(snooze_window_bkMap, mapPtr, snooze_window_bkMapLen);
+	dmaCopy(snooze_window_bkPal, BG_PAL_SUB(id_snooze_window), snooze_window_bkPalLen);
+	for (int i = 0; i < 32 * 32; i++)
+		mapPtr[i] = (mapPtr[i] & 0x0FFF) | (id_snooze_window << 12); 	// モーダル用マップの各タイルにパレットスロットを指定する
+	bgSetPriority(bgSnooze, 0);	// 深度を0に
+	bgHide(bgSnooze);
+	// bgShow(bgSnooze);
+
+	// タッチエリアの設定
+	u8 ind = 0; u8 mar = 2;
+	// alm ON/OFF, hour inc, hour dec, min inc, min dec, snz ON/OFF, snz min inc, snz min dec
+	u8 touch8X[] = {8,61,61,95,95,135,203,203}, touch8Y[] = {17,8,40,8,40,26,8,40};
+	u8 touch8W[] = {45,15,15,15,15,45,15,15}, touch8H[] = {22,8,8,8,8,22,8,8};
+	for (int i=0;i<ELEM_MAX;i++) {
+		int offsetLowerY = colSpanY*i;	// 何段目か
+		for (int j=0;j<8;j++) {
+			touchArea[ind].x=touch8X[j]-mar; touchArea[ind].y=touch8Y[j]+offsetLowerY-mar; touchArea[ind].w=touch8W[j]+2*mar; touchArea[ind].h=touch8H[j]+2*mar; ind++;
+		}
+	}
+	touchArea[ind].x=70-mar; touchArea[ind].y=173-mar; touchArea[ind].w=15+2*mar; touchArea[ind].h=15+2*mar;	// sound
+
+
+	// // 背景作成用
+	// // 横線
+	// int bg0sub = bgInitSub(0, BgType_Text4bpp, BgSize_T_256x256, 16, 0);	// mapBaseとtileBaseは衝突しないように
+	// dmaCopy(bg_bkTiles, bgGetGfxPtr_id(bg0sub,id_bg_bk), bg_bkTilesLen);
+	// dmaCopy(bg_bkPal, BG_PAL_SUB(id_bg_bk), bg_bkPalLen);
+	// dmaCopy(bg_bar_bkTiles, bgGetGfxPtr_id(bg0sub,id_bg_bar_bk), bg_bar_bkTilesLen);
+	// dmaCopy(bg_bar_bkPal, BG_PAL_SUB(id_bg_bar_bk), bg_bar_bkPalLen);
+	// u16* mapPtr = (u16*)bgGetMapPtr(bg0sub);
+	// int barYindOffset = (colSpanY/8)*32;
+	// int barYind = barYindOffset;
+	// for(int c=0;c<ELEM_MAX;c++) {
+	// 	for(int i=0;i<32;i++)
+	// 		mapPtr[barYind + i] = 1 | (1 << 12);	// 1: paletteSlot
+	// 	barYind += barYindOffset;
+	// }
+	// // それ以外(文字・ボタン)
+	// int testLowerId = 51;
+	// int offsetLowerY = colSpanY*0;	// 何段目か
+	// smallGfxSub = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）
+	// for (int i=0;i<42;i++)		// 16x16の領域を残り42個分確保する
+	// 	oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);
+	// dmaCopy(ascii_small_bkTiles, smallGfxSub, ascii_small_bkTilesLen);
+	// dmaCopy(ascii_small_bkPal, SPRITE_PAL_SUB(id_ascii_small_sub), ascii_small_bkPalLen);
+	// triGfx = oamAllocateGfx(&oamSub, SpriteSize_16x8, SpriteColorFormat_16Color);
+	// dmaCopy(up_tri_bkTiles, triGfx, up_tri_bkTilesLen);
+	// dmaCopy(up_tri_bkPal, SPRITE_PAL_SUB(id_up_tri), up_tri_bkPalLen);
+	// buttonGfx = oamAllocateGfx(&oamSub, SpriteSize_64x32, SpriteColorFormat_16Color);
+	// dmaCopy(button_bkTiles, buttonGfx, button_bkTilesLen);
+	// dmaCopy(button_bkPal, SPRITE_PAL_SUB(id_button), button_bkPalLen);
+	// int triX[] = {61,61,95,95,203,203}, triY[] = {8,40,8,40,8,40};
+	// bool triFlip[] = {0,1,0,1,0,1};
+	// for (int i=0;i<sizeof(triX)/4;i++)
+	// 	oamSet(&oamSub, testLowerId+i, triX[i], triY[i]+offsetLowerY, 0, id_up_tri, SpriteSize_16x8, SpriteColorFormat_16Color, triGfx, -1, false, false, false, triFlip[i], false);
+	// drawCharSmallSub(testLowerId+6,122,4+offsetLowerY,"SNOOZE",6,0);
+	// drawCharSmallSub(testLowerId+12,220,20+offsetLowerY,"MIN",3,0);
+	// drawCharSmallSub(testLowerId+15,12,20+offsetLowerY,"OFF",3,0);	// Alarm ON/OFF text
+	// drawCharSmallSub(testLowerId+18,139,29+offsetLowerY,"OFF",3,0);	// Snooze ON/OFF text
+	// char testDisp[3] = "";
+	// sprintf(testDisp, "%02i", alm[0].hour);
+	// drawCharSmallSub(testLowerId+21,56,20+offsetLowerY,testDisp,strlen(testDisp),0);	// Alarm hour text
+	// drawCharSmallSub(testLowerId+23,78,20+offsetLowerY,":",1,0);
+	// sprintf(testDisp, "%02i", alm[0].min);
+	// drawCharSmallSub(testLowerId+24,90,20+offsetLowerY,testDisp,strlen(testDisp),0);	// Alarm minute text
+	// sprintf(testDisp, "%02i", alm[0].snoozeMin);
+	// drawCharSmallSub(testLowerId+26,198,20+offsetLowerY,testDisp,strlen(testDisp),0);	// Snooze min text
+	// // button
+	// oamSet(&oamSub, testLowerId+28, 8, 17+offsetLowerY, 0, id_button, SpriteSize_64x32, SpriteColorFormat_16Color, buttonGfx, -1, false, false, false, false, false);
+	// oamSet(&oamSub, testLowerId+29, 135, 26+offsetLowerY, 0, id_button, SpriteSize_64x32, SpriteColorFormat_16Color, buttonGfx, -1, false, false, false, false, false);
+	// drawCharSmallSub(testLowerId+30,1,173,"SOUND:0",7,0);
+
+	int keyWait = 0;
+	int touchWait = 0;
+	sel = -1;	// 選択を解除
+
+	while(my_pmMainLoop()) {
+
+		swiWaitForVBlank();
+		scanKeys();
+		DC_InvalidateRange(&mIPC, sizeof(mIPC));
+		// get current time
+		getTime();
+		// draw clock
+		if ((prev_h != h)) {
+			if (h>=10) drawClockNum(0,h/10,clockX,clockY);
+			else oamClearSprite(&oamMain, 0);
+			drawClockNum(1,h%10,clockX+wid,clockY);
+			debug++;	// delete!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		}
+		if ((prev_m != m)) {
+			drawClockNum(3,m/10,clockX+2*wid+colonWid,clockY);
+			drawClockNum(4,m%10,clockX+3*wid+colonWid,clockY);
+			debug++;	// delete!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		}
+		// colon blinking
+		if (colonCounter == 0) {	// on
+			drawClockNum(2,10,clockX+2*wid,clockY);	// colon
+			// get battery level and draw
+			u8 battLevel = PM_BATT_LEVEL(pmGetBatteryState());
+			drawBattStat(battLevel);
+		} else if (colonCounter == COLON_ON_TIME) {	// off
+			oamClearSprite(&oamMain, 2);
+		}
+		// display alarm
+		if ((prev_almIsOn != almIsOn)||(prev_almHour != almHour)||(prev_almMin != almMin)) {
+			startId = 5;
+			if (almIsOn) {
+				char almStr[15] = "";
+				sprintf(almStr, "ALARM  %02i:%02i", almHour, almMin);
+				drawCharSmall(startId,115,5,almStr,strlen(almStr));
+			} else {
+				for (int i=0;i<12;i++) {oamClearSprite(&oamMain, startId+i);}
+				for (int i=0;i<12;i++) {oamClearSprite(&oamMain, startId2+i);}
+			}
+			debug++;	// delete!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		}
+		if ((almSel != 255) && ((prev_snoozeOn != alm[almSel].snoozeOn)||(prev_snoozeMin != alm[almSel].snoozeMin))) {
+			startId2 = 17;
+			if (alm[almSel].snoozeOn) {
+				char snzStr[11] = "";
+				sprintf(snzStr, "SNOOZE %2i", alm[almSel].snoozeMin);
+				drawCharSmall(startId2,115,25,snzStr,strlen(snzStr));
+				drawCharSmall(startId2+9,218,25,"MIN",3);
+			} else {
+				for (int i=0;i<12;i++) {oamClearSprite(&oamMain, startId2+i);}
+			}
+			debug++;	// delete!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		}
+		// now date
+		if ((prev_day != day)) {
+			char date[18] = "";
+			sprintf(date, "%4i/%i/%i(%s)  ", year, month, day, weekStrArr[week]);
+			int startId3 = 29;
+			drawCharSmall(startId3,10,170,date,strlen(date));
+			debug++;	// delete!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		}
+		// save previous value for display trigger
+		prev_h = h;
+		prev_m = m;
+		prev_day = day;
+		prev_almIsOn = almIsOn;
+		prev_almHour = almHour;
+		prev_almMin = almMin;
+		prev_snoozeOn = almSel==255 ? false : alm[almSel].snoozeOn;
+		prev_snoozeMin = almSel==255 ? 255 : alm[almSel].snoozeMin;
+
+		// alarm watchdog
+		if (IPC->almState == RingOn) {
+			if (isDSiMode()) {
+				prev_vol = 0xFF & pxiSendAndReceive(PxiChannel_User0, READ_VOL << MODE_SHIFT_NUM);
+				pxiSendAndReceive(PxiChannel_User0, (WRITE_VOL << MODE_SHIFT_NUM) | VOL_MAX);	// set sound volume max
+			}
+			amb = mmEffect(seNum);
+			IPC->almState = Ringing;
+			DC_FlushRange(&mIPC, sizeof(mIPC));
+			bgShow(bgRinging);
+			sel = -1;	// 選択を解除
+		}
+
+		touchRead(&touch);	// read the touchscreen coordinates
+		int down = keysDown();
+		int held = keysHeld();
+		int up = keysUp();
+		char tempDisp[8] = "";	// for display
+
+		// stop snooze and reset alarm
+		if ((IPC->almState == None) && (waitSnooze)) {
+			if ((held&KEY_A)) {
+				unsnoozeCounter++;
+				sprintf(tempDisp, "%3i/%3i", unsnoozeCounter, UNSNOOZE_FRAME);
+				drawCharSmallSub(88,140,134,tempDisp,strlen(tempDisp),0);
+				snoozeHold = true;
+			} else {
+				unsnoozeCounter = 0;
+				drawCharSmallSub(88,140,134,"       ",7,0);
+				snoozeHold = false;
+			}
+			if ((unsnoozeCounter >= UNSNOOZE_FRAME)) {
+				searchNearAlmSend();	// reset alarm
+				waitSnooze = false;
+				unsnoozeCounter = 0;
+				bgHide(bgSnooze);
+				drawCharSmallSub(88,140,134,"       ",7,0);
+			}
+		}
+		if ((up&KEY_A)) {snoozeHold = false;}	// not to move selection
+		// stop alarm
+		if ((down&KEY_B) || (down&KEY_LID)) {
+			if (IPC->almState == Ringing) {
+				bgHide(bgSnooze);
+				bgHide(bgRinging);
+				// stop SFX
+				mmEffectCancel(amb);
+				if (isDSiMode()) {
+					u8 temp = 0xFF & pxiSendAndReceive(PxiChannel_User0, READ_VOL << MODE_SHIFT_NUM);
+					if (temp != VOL_MAX) prev_vol = temp;
+					pxiSendAndReceive(PxiChannel_User0, (WRITE_VOL << MODE_SHIFT_NUM) | prev_vol);	// restore sound volume
+				}
+				// アラームが期限切れかどうか（snooze OFFの場合は常にfalse）
+				bool validSnooze = alm[almSel].snoozeOn ? checkValidSnooze(alm[almSel].snoozeMin) : false;
+				if (alm[almSel].snoozeOn && validSnooze) {
+					waitSnooze = true;
+					addMinAndSend(alm[almSel].snoozeMin);
+					bgShow(bgSnooze);
+				} else {
+					waitSnooze = false;
+					searchNearAlmSend();	// reset alarm
+				}
+				IPC->almState = None;
+				DC_FlushRange(&mIPC, sizeof(mIPC));
+			}
+		}
+		// アラームが何もセットされていないときの警告音を鳴らすのとフラグを立てる
+		bool noAlmTemp = true;
+		for (int i=0;i<ELEM_MAX;i++) 
+			if (alm[i].isOn) noAlmTemp = false;
+		if (noAlmTemp && (down&KEY_LID)) {
+			noAlarmSet = true;
+			if (isDSiMode()) {
+				prev_vol = 0xFF & pxiSendAndReceive(PxiChannel_User0, READ_VOL << MODE_SHIFT_NUM);
+				pxiSendAndReceive(PxiChannel_User0, (WRITE_VOL << MODE_SHIFT_NUM) | VOL_MAX);	// set sound volume max
+			}
+			amb = mmEffect(seNum);
+		} else if (noAlarmSet && (up&KEY_LID)) {
+			noAlarmSet = false;
+			mmEffectCancel(amb);
+			if (isDSiMode()) {
+				u8 temp = 0xFF & pxiSendAndReceive(PxiChannel_User0, READ_VOL << MODE_SHIFT_NUM);
+				if (temp != VOL_MAX) prev_vol = temp;
+				pxiSendAndReceive(PxiChannel_User0, (WRITE_VOL << MODE_SHIFT_NUM) | prev_vol);	// restore sound volume
+			}
+			swiWaitForVBlank();
+			swiWaitForVBlank();
+			swiWaitForVBlank();		// 画面の乱れを避ける
+		}
+
+		if (keyWait <= 0) {	// 移動key処理
+			if (!snoozeHold && !waitSnooze && !(IPC->almState == Ringing)) {
+				if ((down&KEY_RIGHT) || (held&KEY_RIGHT) || (down&KEY_A) || (held&KEY_A)) {
+					sel++;
+					if (sel >= SEL_MAX) sel = 0;
+					keyWait = keyWaitNum;
+				}
+				if ((down&KEY_LEFT) || (held&KEY_LEFT) || (down&KEY_Y) || (held&KEY_Y)) {
+					if (sel <= 0) sel = SEL_MAX;
+					sel--;
+					keyWait = keyWaitNum;
+				}
+				if ((down&KEY_UP) || (held&KEY_UP) || (down&KEY_X) || (held&KEY_X)) {
+					u8 selMod = sel%5;
+					u8 i = sel/5;
+					if (sel == 15) seNum = ++seNum >= seNumLen ? 0 : seNum;
+					else if (selMod == 0) {alm[i].isOn = alm[i].isOn ? 0 : 1; searchNearAlmSend();}
+					else if (selMod == 1) {alm[i].hour = hourCalc(alm[i].hour, 1); searchNearAlmSend();}
+					else if (selMod == 2) {alm[i].min = minCalc(alm[i].min, 1); searchNearAlmSend();}
+					else if (selMod == 3) {alm[i].snoozeOn = alm[i].snoozeOn ? 0 : 1; searchNearAlmSend();}
+					else if (selMod == 4) {alm[i].snoozeMin++;if(alm[i].snoozeMin > SNOOZE_MAX) alm[i].snoozeMin = 1; searchNearAlmSend();}
+					// DC_FlushRange(&mIPC, sizeof(mIPC));	// IPC isn't used here anymore
+	#ifndef EMU
+					writeSave(saveFileName, (void *)alm, sizeof(alm));
+	#endif
+					keyWait = (selMod == 0) || (selMod == 3) ? keyWaitNum : numModWait;
+				}
+				if ((down&KEY_DOWN) || (held&KEY_DOWN) || (down&KEY_B) || (held&KEY_B)) {
+					u8 selMod = sel%5;
+					u8 i = sel/5;
+					if (sel == 15) seNum = --seNum < 0 ? seNumLen-1 : seNum;
+					else if (selMod == 0) {alm[i].isOn = alm[i].isOn ? 0 : 1; searchNearAlmSend();}
+					else if (selMod == 1) {alm[i].hour = hourCalc(alm[i].hour, -1); searchNearAlmSend();}
+					else if (selMod == 2) {alm[i].min = minCalc(alm[i].min, -1); searchNearAlmSend();}
+					else if (selMod == 3) {alm[i].snoozeOn = alm[i].snoozeOn ? 0 : 1; searchNearAlmSend();}
+					else if (selMod == 4) {if (alm[i].snoozeMin <= 1) alm[i].snoozeMin = SNOOZE_MAX+1;alm[i].snoozeMin--; searchNearAlmSend();}
+					// DC_FlushRange(&mIPC, sizeof(mIPC));	// IPC isn't used here anymore
+	#ifndef EMU
+					writeSave(saveFileName, (void *)alm, sizeof(alm));
+	#endif
+					keyWait = (selMod == 0) || (selMod == 3) ? keyWaitNum : numModWait;
+				}
+				if ((down&KEY_SELECT)) {sel = -1; keyWait = keyWaitNum;}	// 選択を解除
+			}
+			if ((down&KEY_START)) {REG_POWERCNT ^= POWER_SWAP_LCDS; keyWait = keyWaitNum;}	// 上下の表示を入れ替え
+		}
+		// タッチイベントの処理
+		if ((down & KEY_TOUCH) && !waitSnooze && (IPC->almState != Ringing))
+			for (int i=0;i<TOUCH_AREA_MAX;i++) {
+				if ((touch.px >= touchArea[i].x)&&(touch.px <= touchArea[i].x+touchArea[i].w)&&
+				(touch.py >= touchArea[i].y)&&(touch.py <= touchArea[i].y+touchArea[i].h)){
+					u8 row = i/8, col = i%8;
+					if (row == 3) seNum = ++seNum >= seNumLen ? 0 : seNum;
+					else if (col == 0) {alm[row].isOn = alm[row].isOn ? 0 : 1; searchNearAlmSend();}
+					else if (col == 1) {alm[row].hour = hourCalc(alm[row].hour, 1); searchNearAlmSend();}
+					else if (col == 2) {alm[row].hour = hourCalc(alm[row].hour, -1); searchNearAlmSend();}
+					else if (col == 3) {alm[row].min = minCalc(alm[row].min, 1); searchNearAlmSend();}
+					else if (col == 4) {alm[row].min = minCalc(alm[row].min, -1); searchNearAlmSend();}
+					else if (col == 5) {alm[row].snoozeOn = alm[row].snoozeOn ? 0 : 1; searchNearAlmSend();}
+					else if (col == 6) {alm[row].snoozeMin++;if(alm[row].snoozeMin > SNOOZE_MAX) alm[row].snoozeMin = 1; searchNearAlmSend();}
+					else if (col == 7) {if (alm[row].snoozeMin <= 1) alm[row].snoozeMin = SNOOZE_MAX+1;alm[row].snoozeMin--; searchNearAlmSend();}
+					touchWait = 2*numModWait;	// タッチ後の硬直
+#ifndef EMU
+					writeSave(saveFileName, (void *)alm, sizeof(alm));
+#endif
+				}
+			}
+		if ((touchWait <= 0) && (held & KEY_TOUCH) && !waitSnooze && (IPC->almState != Ringing))
+			for (int i=0;i<TOUCH_AREA_MAX;i++) {
+				if ((touch.px >= touchArea[i].x)&&(touch.px <= touchArea[i].x+touchArea[i].w)&&
+				(touch.py >= touchArea[i].y)&&(touch.py <= touchArea[i].y+touchArea[i].h)){
+					u8 row = i/8, col = i%8;
+					// if (row == 3) seNum = ++seNum >= seNumLen ? 0 : seNum;
+					// else if (col == 0) {alm[row].isOn = alm[row].isOn ? 0 : 1; searchNearAlmSend();}
+					if (col == 1) {alm[row].hour = hourCalc(alm[row].hour, 1); searchNearAlmSend();}
+					else if (col == 2) {alm[row].hour = hourCalc(alm[row].hour, -1); searchNearAlmSend();}
+					else if (col == 3) {alm[row].min = minCalc(alm[row].min, 1); searchNearAlmSend();}
+					else if (col == 4) {alm[row].min = minCalc(alm[row].min, -1); searchNearAlmSend();}
+					// else if (col == 5) {alm[row].snoozeOn = alm[row].snoozeOn ? 0 : 1; searchNearAlmSend();}
+					else if (col == 6) {alm[row].snoozeMin++;if(alm[row].snoozeMin > SNOOZE_MAX) alm[row].snoozeMin = 1; searchNearAlmSend();}
+					else if (col == 7) {if (alm[row].snoozeMin <= 1) alm[row].snoozeMin = SNOOZE_MAX+1;alm[row].snoozeMin--; searchNearAlmSend();}
+					touchWait = numModWait;
+				}
+			}
+
+		// 下画面のアラームの設定表示
+		int startLowerId = 51;
+		// (alm ON/OFF, hour, min, snz ON/OFF, snz min)*ELEM_MAX, sound
+		u8 settingX[] = {12,56,90,139,198,70}, settingY[] = {20,20,20,29,20,173};
+		for (int i=0;i<ELEM_MAX;i++) {
+			int offsetLowerY = colSpanY*i;	// 何段目か
+			sprintf(tempDisp, "%s", alm[i].isOn ? "ON " : "OFF");
+			drawCharSmallSub(startLowerId,settingX[0],settingY[0]+offsetLowerY,tempDisp,strlen(tempDisp),1);	// Alarm ON/OFF text
+			sprintf(tempDisp, "%02i", alm[i].hour);
+			drawCharSmallSub(startLowerId+3,settingX[1],settingY[1]+offsetLowerY,tempDisp,strlen(tempDisp),1);	// Alarm hour text
+			sprintf(tempDisp, "%02i", alm[i].min);
+			drawCharSmallSub(startLowerId+5,settingX[2],settingY[2]+offsetLowerY,tempDisp,strlen(tempDisp),1);	// Alarm minute text
+			sprintf(tempDisp, "%s", alm[i].snoozeOn ? "ON " : "OFF");
+			drawCharSmallSub(startLowerId+7,settingX[3],settingY[3]+offsetLowerY,tempDisp,strlen(tempDisp),1);	// Snooze ON/OFF text
+			sprintf(tempDisp, "%2i", alm[i].snoozeMin);
+			drawCharSmallSub(startLowerId+10,settingX[4],settingY[4]+offsetLowerY,tempDisp,strlen(tempDisp),1);	// Snooze min text
+			startLowerId += 12;
+		}
+		sprintf(tempDisp, "%i", seNum);
+		drawCharSmallSub(startLowerId+36,settingX[5],settingY[5],tempDisp,strlen(tempDisp),1);
+
+		// draw selection
+		if (sel >= 0) {
+			int selButtonOffsetX = 10, selButtonOffsetY = 0;
+			u8 selRow = sel/5, selCol = sel%5;
+			if (selRow == 3) drawSelection(settingX[5]-6,settingY[5],1,1);	// sound
+			else {
+				int offsetLowerY = colSpanY*selRow;	// 何段目か
+				if ((selCol == 0) || (selCol == 3))
+					drawSelection(settingX[selCol]+selButtonOffsetX,settingY[selCol]+selButtonOffsetY+offsetLowerY,2,1);	// alm ON/OFF, snz ON/OFF
+				if ((selCol == 1) || (selCol == 2) || (selCol == 4))
+					drawSelection(settingX[selCol],settingY[selCol]+offsetLowerY,1,1);	// hour, min, snz min
+			}
+		} else if (sel == -1) oamClearSprite(&oamSub, SELECTION_SPRITE_ID);
+
+		// // for debug
+		// char debugTxt[10] = "";
+		// sprintf(debugTxt, "%i", snoozeHold);
+		// drawCharSmall(99,5,140,debugTxt,strlen(debugTxt));
+
+
+		// char selSpace[26] = "";
+		// sprintf(selSpace, "    %s %s %s     %s %s", sel == 0 ? "---" : "   ", sel == 1 ? "--" : "  ", sel == 2 ? "--" : "  ", sel == 3 ? "---" : "   ", sel == 4 ? "--" : "  ");
+		// char selSpace2[26] = "";
+		// sprintf(selSpace2, "    %s %s %s     %s %s", sel == 5 ? "---" : "   ", sel == 6 ? "--" : "  ", sel == 7 ? "--" : "  ", sel == 8 ? "---" : "   ", sel == 9 ? "--" : "  ");
+		// char selSpace3[26] = "";
+		// sprintf(selSpace3, "    %s %s %s     %s %s", sel == 10 ? "---" : "   ", sel == 11 ? "--" : "  ", sel == 12 ? "--" : "  ", sel == 13 ? "---" : "   ", sel == 14 ? "--" : "  ");
+		// char selSpace4[16] = "";
+		// sprintf(selSpace4, "        %s", sel == 15 ? "-" : " ");
+
+		// iprintf("\x1b[1;1Halm:%3s %02i:%02i snz:%3s %02i min\n", alm[0].isOn ? "ON" : "OFF", alm[0].hour, alm[0].min, alm[0].snoozeOn ? "ON" : "OFF", alm[0].snoozeMin);
+		// iprintf("\x1b[2;1H%s\n", selSpace);
+		// iprintf("\x1b[3;1Halm:%3s %02i:%02i snz:%3s %02i min\n", alm[1].isOn ? "ON" : "OFF", alm[1].hour, alm[1].min, alm[1].snoozeOn ? "ON" : "OFF", alm[1].snoozeMin);
+		// iprintf("\x1b[4;1H%s\n", selSpace2);
+		// iprintf("\x1b[5;1Halm:%3s %02i:%02i snz:%3s %02i min\n", alm[2].isOn ? "ON" : "OFF", alm[2].hour, alm[2].min, alm[2].snoozeOn ? "ON" : "OFF", alm[2].snoozeMin);
+		// iprintf("\x1b[6;1H%s\n", selSpace3);
+		// iprintf("\x1b[7;1HseNum = %i\n", seNum);
+		// iprintf("\x1b[8;1H%s\n", selSpace4);
+		// iprintf("\x1b[9;1HCurrent time %02i:%02i:%02i\n", h, m, s);
+		// // iprintf("\x1b[10;1HNext alarm%1i %s %02i:%02i %s\n", almSel, almIsOn == 1 ? "  set" : "unset", almHour, almMin, waitSnooze ? "snz" : "   ");
+
+		// iprintf("\x1b[11;0H                                                               \n");
+		// if (IPC->almState == Ringing) iprintf("\x1b[11;0HAlarm ringing. Press B to stop.");
+		// else if (waitSnooze) iprintf("\x1b[11;0HSnooze is on. Hold A to stop, or you cant change alarms. %3i/%3i", unsnoozeCounter, UNSNOOZE_FRAME);
+
+		// // iprintf("\x1b[13;0HFrame x = %04i\n", frame);
+		// // iprintf("\x1b[14;1HTimer0 = %04i\n", timer0);
+		// iprintf("\x1b[15;1Halarm_counter = %04i\n", IPC->counter);
+
+		// iprintf("\x1b[16;1Hprev_snoozeOn: %04i\n", prev_snoozeOn);
+		// iprintf("\x1b[17;1Hprev_snoozeMin: %04i\n", prev_snoozeMin);
+		// iprintf("\x1b[18;1HalmState = %i\n", IPC->almState);
+		// // iprintf("\x1b[18;1Haddr = %lx\n", (u32)IPC);
+		// // iprintf("\x1b[18;1Hret = %lx\n", ret);
+		// iprintf("\x1b[19;1HrecvTest = %08lx\n", recvTest);
+		// iprintf("\x1b[20;1Hsize mIPC = %04u\n", sizeof(mIPC));
+		// // iprintf("\x1b[20;1Hmsg = %04lu\n", msg);
+		// // iprintf("\x1b[21;1Hsize alm = %04u\n", sizeof(alm));
+		// // iprintf("\x1b[21;1Hyear = %i\n", year);
+		// iprintf("\x1b[21;1Hdata = %08lx\n", IPC->data);
+		// // iprintf("\x1b[21;1Hbatt = %02i\n", PM_BATT_LEVEL(pmGetBatteryState()));
+		// // iprintf("\x1b[22;1Hprev_vol = %i\n", prev_vol);
+		// iprintf("\x1b[22;1Hdebug:%08lx test:%08lx\n", debug, test);
+
+		oamUpdate(&oamMain); // VBlank時に描画情報を更新
+		oamUpdate(&oamSub); // VBlank時に描画情報を更新
+
+		frame++;
+		colonCounter++;
+		if (colonCounter >= COLON_PERIOD) colonCounter = 0;
+
+		if (keyWait > 0) keyWait--;
+		if (touchWait > 0) touchWait--;
+
+	}
+
+	return 0;
+}
