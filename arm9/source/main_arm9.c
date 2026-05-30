@@ -44,10 +44,6 @@
 // save file name
 static char saveFileName[] = "alarmApp.sav";
 
-static volatile u32 recvTest = 0;
-static volatile int frame = 0;
-// static volatile int timer0 = 0;
-
 static volatile IpcStruct* IPC;
 static IpcStruct mIPC __attribute__((aligned(32)));
 
@@ -380,7 +376,6 @@ void searchNearAlmSend(void)
 		almMin = decodeBcd((ret >> 16) & 0x7f);
 		almSel = nearestInd;
 	}
-	recvTest = ret;
 }
 bool checkValidSnooze(int min)	// for snooze
 {
@@ -411,7 +406,6 @@ void addMinAndSend(int min)	// for snooze
 		almHour = decodeBcd((ret >> 8) & 0x3f);
 		almMin = decodeBcd((ret >> 16) & 0x7f);
 	}
-	recvTest = ret;
 }
 inline bool my_pmMainLoop() {
 	return !noAlarmSet ? pmMainLoop() : true;
@@ -843,7 +837,6 @@ int main(void) {
 		oamUpdate(&oamMain); // VBlank時に描画情報を更新
 		oamUpdate(&oamSub); // VBlank時に描画情報を更新
 
-		frame++;
 		colonCounter++;
 		if (colonCounter >= COLON_PERIOD) colonCounter = 0;
 
