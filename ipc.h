@@ -34,7 +34,7 @@ enum alarmState {
 };
  
 typedef struct ipcStruct {	// be careful with alignment
-	u32 data;	// no need maybe?
+	u32 data;	// for debug (actually no need)
 	int counter;	// for debug (actually no need)
 	u8 almState;	// using alarmState enum 0:none, 1: alarm ring on(when wakeup IRQ_RTC), 2: alarm is ringing
 	u8 padding[16];
