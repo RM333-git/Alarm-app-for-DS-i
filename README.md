@@ -10,7 +10,7 @@ RTC割込みと、スリープ処理を省電力化するために、devkitpro/c
 同じようにDSiの開発に興味がある方や、モノづくりが好きな方とぜひ情報交換したいです！
 また、ニッチなガジェット改造や、自作アプリ開発が好きな人とも繋がりたいなと思っています。
 
-「コードのここどうなってるの？」といった質問や、改善の提案など、IssueやPull Request、コメントやリプライ、[X（旧Twitter）](https://x.com/miri_harusamee または[discord](https://discord.gg/5JBwXjN53j)までお気軽にどうぞ！
+「コードのここどうなってるの？」といった質問や、改善の提案など、IssueやPull Request、コメントやリプライ、[X（旧Twitter）](https://x.com/miri_harusamee)または[discord](https://discord.gg/5JBwXjN53j)までお気軽にどうぞ！
 
 ## 使い方
 <img width="258" height="386" alt="screenshot" src="https://github.com/user-attachments/assets/2d8f3ff2-75ab-4415-a2df-0733ae9d285a" />
