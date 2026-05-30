@@ -1,3 +1,8 @@
+/*---------------------------------------------------------------------------------
+
+	Simple alarm app by miri
+
+---------------------------------------------------------------------------------*/
 #include <nds.h>
 #include <stdio.h>
 #include <time.h>
@@ -8,21 +13,14 @@
 #include "soundbank.h"
 #include "soundbank_bin.h"
 
-// #include "n09.h"
 #include "n09_bk.h"
 #include "ascii_small_bk.h"
-// #include "batt_bg.h"
-// #include "batt_stat.h"
 #include "batt_bg_bk.h"
 #include "batt_stat_bk.h"
 #include "lowerBg_bk.h"
 #include "ringing_window_bk.h"
 #include "snooze_window_bk.h"
 #include "selection.h"
-// #include "up_tri_bk.h"	// 背景作成用
-// #include "button_bk.h"
-// #include "bg_bk.h"
-// #include "bg_bar_bk.h"
 
 // pxiSendAndReceiveでやりとりできるのは26bitまで
 // oamsetのスプライトidは[0 - 127]（mainとsub共通）
@@ -40,14 +38,12 @@
 // 88-94	: long press progress
 // 95	: selection
 
+// for emulator (melonDSで動作確認可)
+#define EMU
+
 // save file name
 static char saveFileName[] = "alarmApp.sav";
 
-// for emulator
-// #define EMU
-
-u32 debug = 0;
-u32 test;
 static volatile u32 recvTest = 0;
 static volatile int frame = 0;
 // static volatile int timer0 = 0;
@@ -68,7 +64,7 @@ static u8 almMin;
 static u8 almSel = 255;	// alarm element index (unselect:255)
 static bool waitSnooze = false;	// wait for snooze
 static bool snoozeHold = false;	// holding for reset snooze
-static int seNum = 0;	// alarm SE number (SFX_CLOCK_ALARM02_LOUD, SFX_ALARM2_CONTINUOUS, SFX_TOKEI_NADONO_ALARM)
+static int seNum = 0;	// alarm SE number 
 static const int seNumLen = 2;
 
 // current time variable
@@ -85,7 +81,6 @@ static u8 prev_vol;	// 今の音量を保持する用
 
 static u8 prev_h;	// 表示のトリガー用
 static u8 prev_m;	// 表示のトリガー用
-// static u8 prev_s;	// 表示のトリガー用
 static u8 prev_day;	// 表示のトリガー用
 static u8 prev_almIsOn;	// 表示のトリガー用
 static u8 prev_almHour;	// 表示のトリガー用
@@ -110,7 +105,6 @@ static volatile struct AlarmElem {
 static u8 unsnoozeCounter = 0;
 
 #define SPRITE_DEP 0	// 上画面スプライトの深度
-// #define SPRITE_DEP_SUB 1	// 下画面スプライトの深度	// now not use
 #define NUM_GFX_OFFSET (64*64/2/2)
 #define SMALL_GFX_OFFSET (16*16/2/2)
 u16* clockGfx;
@@ -120,7 +114,6 @@ u16* battStatGfx;
 u16* triGfx;
 u16* buttonGfx;
 u16* smallGfxSub;
-// u16* smallGfxSub[43];
 u16* selectionGfxSub;
 int battStartId, battX, battY;
 // マクロでアドレス計算を共通化
@@ -128,8 +121,6 @@ int battStartId, battX, battY;
 #define SPRITE_PAL_SUB(idx) (SPRITE_PALETTE_SUB + ((idx) * 16))
 #define BG_PAL(idx) (BG_PALETTE + ((idx) * 16))
 #define BG_PAL_SUB(idx) (BG_PALETTE_SUB + ((idx) * 16))
-// #define bgGetGfxPtr_id(bg,idx) (bgGetGfxPtr(bg) + ((idx) * 16))
-// #define bgGetMapPtr_id(bg,idx) (bgGetMapPtr(bg) + ((idx) * 32 * 32))
 enum SPRITE_PAL_ID {
 	id_n09,
 	id_ascii_small,
@@ -143,8 +134,6 @@ enum SPRITE_PAL_SUB_ID {
 	id_button
 };
 enum BG_PALETTE_SUB_ID {
-	// id_bg_bk,
-	// id_bg_bar_bk,
 	id_lowerBg,
 	id_ringing_window,
 	id_snooze_window
@@ -184,15 +173,6 @@ void getTime() {
 	time_t timer = time(NULL);
 	struct tm *tm = localtime(&timer);
 	if(tm != NULL) {
-		// int tm_sec;   /* 秒(0～59) */
-		// int tm_min;   /* 分(0～59) */
-		// int tm_hour;  /* 時(0～59) */
-		// int tm_mday;  /* 日(1～31) */
-		// int tm_mon;   /* 月(0～11) */
-		// int tm_year;  /* 1900年からの年 */
-		// int tm_wday;  /* 日曜日からの日数(0～6) */
-		// int tm_yday;  /* 1月1日からの日数(0～365) */
-		// int tm_isdst; /* 夏時間フラグ(採用:>0,不採用:0,不明:<0)  */
 		h = tm->tm_hour;
 		m = tm->tm_min;
 		s = tm->tm_sec;
@@ -298,7 +278,6 @@ void drawCharSmallSub(int id, int x, int y, char* str, size_t strLen, u8 priorit
 			SpriteSize_16x16, 
 			SpriteColorFormat_16Color, 
 			smallGfxSub+n*SMALL_GFX_OFFSET,             // 転送したデータの場所
-			// smallGfxSub[n],             // 転送したデータの場所
 			-1, false, false, false, false, false);
 		sum += span;
 	}
@@ -377,7 +356,6 @@ void searchNearAlmSend(void)
 	}
 	// alarm set/unset
 	u32 data;
-	// DC_FlushRange(&mIPC, sizeof(mIPC));	// IPC isn't used here anymore
 	if (anyAlarm) {	// set
 		u8 hour = alm[nearestInd].hour;
 		u8 min = alm[nearestInd].min;
@@ -393,7 +371,6 @@ void searchNearAlmSend(void)
 		pxiSendAndReceive(PxiChannel_User0, 0);		// important for write 0 to status2 register to reset IF flag(maybe)
 		ret = pxiSendAndReceive(PxiChannel_User0, data);
 	}
-	// DC_InvalidateRange(&mIPC, sizeof(mIPC));	// IPC isn't used here anymore
 	if (ret != data) {
 		// not succeeded
 	} else {
@@ -431,10 +408,8 @@ void addMinAndSend(int min)	// for snooze
 		// not succeeded
 	} else {
 		// decode and preserve data
-		// almIsOn = (ret >> MODE_SHIFT_NUM) & 1U;
 		almHour = decodeBcd((ret >> 8) & 0x3f);
 		almMin = decodeBcd((ret >> 16) & 0x7f);
-		// almSel = nearestInd;
 	}
 	recvTest = ret;
 }
@@ -455,18 +430,14 @@ int main(void) {
 	IPC = &mIPC;
 
 	// send
-	pxiWaitRemote(PxiChannel_User0);	// これは1回だけ呼べばいい？
+	pxiWaitRemote(PxiChannel_User0);	// これは1回だけ呼べばいい
 	DC_FlushRange(&mIPC, sizeof(mIPC));
-	// u32 ret = pxiSendAndReceive(PxiChannel_User0, (u32)IPC);
 	pxiSendAndReceive(PxiChannel_User0, (u32)IPC);
 
 	// initialize needed
 	mmInitDefaultMem((mm_addr)soundbank_bin);
 
 	// load sound effects
-	// mmLoadEffect( SFX_CLOCK_ALARM02_LOUD );
-	// mmLoadEffect( SFX_ALARM2_CONTINUOUS );
-	// mmLoadEffect( SFX_TOKEI_NADONO_ALARM );
 	for (int i=0;i<seNumLen;i++) {
 		mmLoadEffect(i);
 	}
@@ -476,7 +447,7 @@ int main(void) {
 #ifndef EMU
 	if (fatInitDefault()) {
 		iprintf("\x1b[14;0HfatInitDefault OK\n");
-		// alarm elements initialize (from save file point!!!!!!!!!!!!!!!!!!!!!!)
+		// alarm elements initialize
 		loadSave(saveFileName, (void *)alm, sizeof(alm));
 	} else {
 		iprintf("\x1b[14;0HfatInitDefault failure\n");
@@ -494,16 +465,13 @@ int main(void) {
 	prev_almMin = almMin;
 	prev_snoozeOn = almSel==255 ? false : alm[almSel].snoozeOn;
 	prev_snoozeMin = 255;
-	// prev_snoozeMin = almSel==255 ? 255 : alm[almSel].snoozeMin;	// 動作大丈夫だったら消す！！！！！！！！！！
 
 	// draw upper screen
 	videoSetMode(MODE_0_2D | DISPLAY_SPR_ACTIVE);
 	// VRAMをスプライト用に設定
 	vramSetBankA(VRAM_A_MAIN_SPRITE);
-	// vramSetPrimaryBanks(VRAM_A_MAIN_SPRITE, VRAM_B_MAIN_BG, VRAM_C_SUB_BG, VRAM_D_SUB_SPRITE);
 	// スプライトメモリの初期化
 	oamInit(&oamMain, SpriteMapping_1D_128, false);
-	// oamInit(&oamMain, SpriteMapping_1D_256, false);
 	// サブエンジン（下）の設定
 	videoSetModeSub(MODE_0_2D | DISPLAY_SPR_ACTIVE);
 	vramSetBankC(VRAM_C_SUB_BG);
@@ -545,10 +513,6 @@ int main(void) {
 	// 下画面用のスプライト・背景の準備
 
 	// 文字表示用 allocateの空回しはホントは良くない（前のメモリ配置次第で飛び地になるから）（アドレスを配列などで保持して使うほうが良い）
-	// for (int i=0;i<43;i++) {		// 16x16の領域を43個分確保する	// 正統版
-	// 	smallGfxSub[i] = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）
-	// 	dmaCopy(ascii_small_bkTiles+i*(4*4*2), smallGfxSub[i], 16*16/2);
-	// }
 	smallGfxSub = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）（邪道版）
 	for (int i=0;i<42;i++)		// 16x16の領域を残り42個分確保する
 		oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);
@@ -573,7 +537,6 @@ int main(void) {
 		mapPtr[i] = (mapPtr[i] & 0x0FFF) | (id_ringing_window << 12); 	// モーダル用マップの各タイルにパレットスロットを指定する
 	bgSetPriority(bgRinging, 0);	// 深度を0に
 	bgHide(bgRinging);
-	// bgShow(bgRinging);
 	// snooze(レイヤー2(深度ではない))
 	int bgSnooze = bgInitSub(2, BgType_Text4bpp, BgSize_T_256x256, 18, 5);	// mapBaseとtileBaseは衝突しないように
 	mapPtr = bgGetMapPtr(bgSnooze);
@@ -584,7 +547,6 @@ int main(void) {
 		mapPtr[i] = (mapPtr[i] & 0x0FFF) | (id_snooze_window << 12); 	// モーダル用マップの各タイルにパレットスロットを指定する
 	bgSetPriority(bgSnooze, 0);	// 深度を0に
 	bgHide(bgSnooze);
-	// bgShow(bgSnooze);
 
 	// タッチエリアの設定
 	u8 ind = 0; u8 mar = 2;
@@ -598,57 +560,6 @@ int main(void) {
 		}
 	}
 	touchArea[ind].x=70-mar; touchArea[ind].y=173-mar; touchArea[ind].w=15+2*mar; touchArea[ind].h=15+2*mar;	// sound
-
-
-	// // 背景作成用
-	// // 横線
-	// int bg0sub = bgInitSub(0, BgType_Text4bpp, BgSize_T_256x256, 16, 0);	// mapBaseとtileBaseは衝突しないように
-	// dmaCopy(bg_bkTiles, bgGetGfxPtr_id(bg0sub,id_bg_bk), bg_bkTilesLen);
-	// dmaCopy(bg_bkPal, BG_PAL_SUB(id_bg_bk), bg_bkPalLen);
-	// dmaCopy(bg_bar_bkTiles, bgGetGfxPtr_id(bg0sub,id_bg_bar_bk), bg_bar_bkTilesLen);
-	// dmaCopy(bg_bar_bkPal, BG_PAL_SUB(id_bg_bar_bk), bg_bar_bkPalLen);
-	// u16* mapPtr = (u16*)bgGetMapPtr(bg0sub);
-	// int barYindOffset = (colSpanY/8)*32;
-	// int barYind = barYindOffset;
-	// for(int c=0;c<ELEM_MAX;c++) {
-	// 	for(int i=0;i<32;i++)
-	// 		mapPtr[barYind + i] = 1 | (1 << 12);	// 1: paletteSlot
-	// 	barYind += barYindOffset;
-	// }
-	// // それ以外(文字・ボタン)
-	// int testLowerId = 51;
-	// int offsetLowerY = colSpanY*0;	// 何段目か
-	// smallGfxSub = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）
-	// for (int i=0;i<42;i++)		// 16x16の領域を残り42個分確保する
-	// 	oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);
-	// dmaCopy(ascii_small_bkTiles, smallGfxSub, ascii_small_bkTilesLen);
-	// dmaCopy(ascii_small_bkPal, SPRITE_PAL_SUB(id_ascii_small_sub), ascii_small_bkPalLen);
-	// triGfx = oamAllocateGfx(&oamSub, SpriteSize_16x8, SpriteColorFormat_16Color);
-	// dmaCopy(up_tri_bkTiles, triGfx, up_tri_bkTilesLen);
-	// dmaCopy(up_tri_bkPal, SPRITE_PAL_SUB(id_up_tri), up_tri_bkPalLen);
-	// buttonGfx = oamAllocateGfx(&oamSub, SpriteSize_64x32, SpriteColorFormat_16Color);
-	// dmaCopy(button_bkTiles, buttonGfx, button_bkTilesLen);
-	// dmaCopy(button_bkPal, SPRITE_PAL_SUB(id_button), button_bkPalLen);
-	// int triX[] = {61,61,95,95,203,203}, triY[] = {8,40,8,40,8,40};
-	// bool triFlip[] = {0,1,0,1,0,1};
-	// for (int i=0;i<sizeof(triX)/4;i++)
-	// 	oamSet(&oamSub, testLowerId+i, triX[i], triY[i]+offsetLowerY, 0, id_up_tri, SpriteSize_16x8, SpriteColorFormat_16Color, triGfx, -1, false, false, false, triFlip[i], false);
-	// drawCharSmallSub(testLowerId+6,122,4+offsetLowerY,"SNOOZE",6,0);
-	// drawCharSmallSub(testLowerId+12,220,20+offsetLowerY,"MIN",3,0);
-	// drawCharSmallSub(testLowerId+15,12,20+offsetLowerY,"OFF",3,0);	// Alarm ON/OFF text
-	// drawCharSmallSub(testLowerId+18,139,29+offsetLowerY,"OFF",3,0);	// Snooze ON/OFF text
-	// char testDisp[3] = "";
-	// sprintf(testDisp, "%02i", alm[0].hour);
-	// drawCharSmallSub(testLowerId+21,56,20+offsetLowerY,testDisp,strlen(testDisp),0);	// Alarm hour text
-	// drawCharSmallSub(testLowerId+23,78,20+offsetLowerY,":",1,0);
-	// sprintf(testDisp, "%02i", alm[0].min);
-	// drawCharSmallSub(testLowerId+24,90,20+offsetLowerY,testDisp,strlen(testDisp),0);	// Alarm minute text
-	// sprintf(testDisp, "%02i", alm[0].snoozeMin);
-	// drawCharSmallSub(testLowerId+26,198,20+offsetLowerY,testDisp,strlen(testDisp),0);	// Snooze min text
-	// // button
-	// oamSet(&oamSub, testLowerId+28, 8, 17+offsetLowerY, 0, id_button, SpriteSize_64x32, SpriteColorFormat_16Color, buttonGfx, -1, false, false, false, false, false);
-	// oamSet(&oamSub, testLowerId+29, 135, 26+offsetLowerY, 0, id_button, SpriteSize_64x32, SpriteColorFormat_16Color, buttonGfx, -1, false, false, false, false, false);
-	// drawCharSmallSub(testLowerId+30,1,173,"SOUND:0",7,0);
 
 	int keyWait = 0;
 	int touchWait = 0;
@@ -666,12 +577,10 @@ int main(void) {
 			if (h>=10) drawClockNum(0,h/10,clockX,clockY);
 			else oamClearSprite(&oamMain, 0);
 			drawClockNum(1,h%10,clockX+wid,clockY);
-			debug++;	// delete!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		}
 		if ((prev_m != m)) {
 			drawClockNum(3,m/10,clockX+2*wid+colonWid,clockY);
 			drawClockNum(4,m%10,clockX+3*wid+colonWid,clockY);
-			debug++;	// delete!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		}
 		// colon blinking
 		if (colonCounter == 0) {	// on
@@ -693,7 +602,6 @@ int main(void) {
 				for (int i=0;i<12;i++) {oamClearSprite(&oamMain, startId+i);}
 				for (int i=0;i<12;i++) {oamClearSprite(&oamMain, startId2+i);}
 			}
-			debug++;	// delete!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		}
 		if ((almSel != 255) && ((prev_snoozeOn != alm[almSel].snoozeOn)||(prev_snoozeMin != alm[almSel].snoozeMin))) {
 			startId2 = 17;
@@ -705,7 +613,6 @@ int main(void) {
 			} else {
 				for (int i=0;i<12;i++) {oamClearSprite(&oamMain, startId2+i);}
 			}
-			debug++;	// delete!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		}
 		// now date
 		if ((prev_day != day)) {
@@ -713,7 +620,6 @@ int main(void) {
 			sprintf(date, "%4i/%i/%i(%s)  ", year, month, day, weekStrArr[week]);
 			int startId3 = 29;
 			drawCharSmall(startId3,10,170,date,strlen(date));
-			debug++;	// delete!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		}
 		// save previous value for display trigger
 		prev_h = h;
@@ -836,7 +742,6 @@ int main(void) {
 					else if (selMod == 2) {alm[i].min = minCalc(alm[i].min, 1); searchNearAlmSend();}
 					else if (selMod == 3) {alm[i].snoozeOn = alm[i].snoozeOn ? 0 : 1; searchNearAlmSend();}
 					else if (selMod == 4) {alm[i].snoozeMin++;if(alm[i].snoozeMin > SNOOZE_MAX) alm[i].snoozeMin = 1; searchNearAlmSend();}
-					// DC_FlushRange(&mIPC, sizeof(mIPC));	// IPC isn't used here anymore
 	#ifndef EMU
 					writeSave(saveFileName, (void *)alm, sizeof(alm));
 	#endif
@@ -851,7 +756,6 @@ int main(void) {
 					else if (selMod == 2) {alm[i].min = minCalc(alm[i].min, -1); searchNearAlmSend();}
 					else if (selMod == 3) {alm[i].snoozeOn = alm[i].snoozeOn ? 0 : 1; searchNearAlmSend();}
 					else if (selMod == 4) {if (alm[i].snoozeMin <= 1) alm[i].snoozeMin = SNOOZE_MAX+1;alm[i].snoozeMin--; searchNearAlmSend();}
-					// DC_FlushRange(&mIPC, sizeof(mIPC));	// IPC isn't used here anymore
 	#ifndef EMU
 					writeSave(saveFileName, (void *)alm, sizeof(alm));
 	#endif
@@ -882,6 +786,7 @@ int main(void) {
 #endif
 				}
 			}
+		// タッチ長押し
 		if ((touchWait <= 0) && (held & KEY_TOUCH) && !waitSnooze && (IPC->almState != Ringing))
 			for (int i=0;i<TOUCH_AREA_MAX;i++) {
 				if ((touch.px >= touchArea[i].x)&&(touch.px <= touchArea[i].x+touchArea[i].w)&&
@@ -934,55 +839,6 @@ int main(void) {
 					drawSelection(settingX[selCol],settingY[selCol]+offsetLowerY,1,1);	// hour, min, snz min
 			}
 		} else if (sel == -1) oamClearSprite(&oamSub, SELECTION_SPRITE_ID);
-
-		// // for debug
-		// char debugTxt[10] = "";
-		// sprintf(debugTxt, "%i", snoozeHold);
-		// drawCharSmall(99,5,140,debugTxt,strlen(debugTxt));
-
-
-		// char selSpace[26] = "";
-		// sprintf(selSpace, "    %s %s %s     %s %s", sel == 0 ? "---" : "   ", sel == 1 ? "--" : "  ", sel == 2 ? "--" : "  ", sel == 3 ? "---" : "   ", sel == 4 ? "--" : "  ");
-		// char selSpace2[26] = "";
-		// sprintf(selSpace2, "    %s %s %s     %s %s", sel == 5 ? "---" : "   ", sel == 6 ? "--" : "  ", sel == 7 ? "--" : "  ", sel == 8 ? "---" : "   ", sel == 9 ? "--" : "  ");
-		// char selSpace3[26] = "";
-		// sprintf(selSpace3, "    %s %s %s     %s %s", sel == 10 ? "---" : "   ", sel == 11 ? "--" : "  ", sel == 12 ? "--" : "  ", sel == 13 ? "---" : "   ", sel == 14 ? "--" : "  ");
-		// char selSpace4[16] = "";
-		// sprintf(selSpace4, "        %s", sel == 15 ? "-" : " ");
-
-		// iprintf("\x1b[1;1Halm:%3s %02i:%02i snz:%3s %02i min\n", alm[0].isOn ? "ON" : "OFF", alm[0].hour, alm[0].min, alm[0].snoozeOn ? "ON" : "OFF", alm[0].snoozeMin);
-		// iprintf("\x1b[2;1H%s\n", selSpace);
-		// iprintf("\x1b[3;1Halm:%3s %02i:%02i snz:%3s %02i min\n", alm[1].isOn ? "ON" : "OFF", alm[1].hour, alm[1].min, alm[1].snoozeOn ? "ON" : "OFF", alm[1].snoozeMin);
-		// iprintf("\x1b[4;1H%s\n", selSpace2);
-		// iprintf("\x1b[5;1Halm:%3s %02i:%02i snz:%3s %02i min\n", alm[2].isOn ? "ON" : "OFF", alm[2].hour, alm[2].min, alm[2].snoozeOn ? "ON" : "OFF", alm[2].snoozeMin);
-		// iprintf("\x1b[6;1H%s\n", selSpace3);
-		// iprintf("\x1b[7;1HseNum = %i\n", seNum);
-		// iprintf("\x1b[8;1H%s\n", selSpace4);
-		// iprintf("\x1b[9;1HCurrent time %02i:%02i:%02i\n", h, m, s);
-		// // iprintf("\x1b[10;1HNext alarm%1i %s %02i:%02i %s\n", almSel, almIsOn == 1 ? "  set" : "unset", almHour, almMin, waitSnooze ? "snz" : "   ");
-
-		// iprintf("\x1b[11;0H                                                               \n");
-		// if (IPC->almState == Ringing) iprintf("\x1b[11;0HAlarm ringing. Press B to stop.");
-		// else if (waitSnooze) iprintf("\x1b[11;0HSnooze is on. Hold A to stop, or you cant change alarms. %3i/%3i", unsnoozeCounter, UNSNOOZE_FRAME);
-
-		// // iprintf("\x1b[13;0HFrame x = %04i\n", frame);
-		// // iprintf("\x1b[14;1HTimer0 = %04i\n", timer0);
-		// iprintf("\x1b[15;1Halarm_counter = %04i\n", IPC->counter);
-
-		// iprintf("\x1b[16;1Hprev_snoozeOn: %04i\n", prev_snoozeOn);
-		// iprintf("\x1b[17;1Hprev_snoozeMin: %04i\n", prev_snoozeMin);
-		// iprintf("\x1b[18;1HalmState = %i\n", IPC->almState);
-		// // iprintf("\x1b[18;1Haddr = %lx\n", (u32)IPC);
-		// // iprintf("\x1b[18;1Hret = %lx\n", ret);
-		// iprintf("\x1b[19;1HrecvTest = %08lx\n", recvTest);
-		// iprintf("\x1b[20;1Hsize mIPC = %04u\n", sizeof(mIPC));
-		// // iprintf("\x1b[20;1Hmsg = %04lu\n", msg);
-		// // iprintf("\x1b[21;1Hsize alm = %04u\n", sizeof(alm));
-		// // iprintf("\x1b[21;1Hyear = %i\n", year);
-		// iprintf("\x1b[21;1Hdata = %08lx\n", IPC->data);
-		// // iprintf("\x1b[21;1Hbatt = %02i\n", PM_BATT_LEVEL(pmGetBatteryState()));
-		// // iprintf("\x1b[22;1Hprev_vol = %i\n", prev_vol);
-		// iprintf("\x1b[22;1Hdebug:%08lx test:%08lx\n", debug, test);
 
 		oamUpdate(&oamMain); // VBlank時に描画情報を更新
 		oamUpdate(&oamSub); // VBlank時に描画情報を更新
