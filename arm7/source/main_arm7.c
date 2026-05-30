@@ -41,7 +41,7 @@ static volatile bool rtcFlag = false;
 
 void RtcCallback()
 {
-	// process in main loop
+	// 割込み処理は最小限に
 	rtcFlag = true;
 }
 
@@ -111,7 +111,6 @@ int main() {
 
 	// Receive a message
 	u32 msg = mailboxRecv(&mb);
-	// pxiReply(PxiChannel_User0, msg);
 	u32 data = 0;
 	rtcReadRegister(RtcReg_Time, &data, 3);
 	pxiReply(PxiChannel_User0, data);
@@ -121,9 +120,8 @@ int main() {
 
 
 	// RTC interrupt setup
-	// REG_RCNT = RCNT_MODE_GPIO | RCNT_SI_IRQ_ENABLE | RCNT_SI_DIR_OUT | RCNT_SI;	// 0x8144; worked only once with ds (SI input mode is recommended)
+	// REG_RCNT = RCNT_MODE_GPIO | RCNT_SI_IRQ_ENABLE | RCNT_SI_DIR_OUT | RCNT_SI;	// 0x8144; (SI input mode is recommended)
 	REG_RCNT = RCNT_MODE_GPIO | RCNT_SI_IRQ_ENABLE;	// 0x8100;(recommended) more safe? or battery is low?
-	// setRtcReg(2, 0);	// for test
 	
 	// set & enable IRQ
 	irqSet(IRQ_RTC, RtcCallback);
@@ -155,7 +153,6 @@ int main() {
 		}
 
 		threadWaitForVBlank();
-		// swiIntrWait(1, IRQ_VBLANK | IRQ_RTC);	// 今後の開発へのアドバイス 画面を閉じている時（スリープ中）は、VBlank割り込み自体が発生しなくなる、あるいは周期が変わることがあります。 threadWaitForVBlank() で安定しているなら今のままでも大丈夫ですが、もし「スリープ中だけ時計がわずかにズレる」ようなことがあれば、swiIntrWait(0, IRQ_RTC) などでRTCを直接待つ構造を検討してみてください。
 		frame++;
 	}
 
