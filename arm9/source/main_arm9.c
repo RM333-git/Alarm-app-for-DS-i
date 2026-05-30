@@ -39,7 +39,7 @@
 // 95	: selection
 
 // for emulator (melonDSで動作確認可)
-#define EMU
+// #define EMU
 
 // save file name
 static char saveFileName[] = "alarmApp.sav";
