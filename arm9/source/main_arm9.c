@@ -22,8 +22,8 @@
 #include "snooze_window_bk.h"
 #include "selection.h"
 
-// pxiSendAndReceiveでやりとりできるのは26bitまで
-// oamsetのスプライトidは[0 - 127]（mainとsub共通）
+// pxiSendAndReceive can only handle up to 26 bits
+// The sprite IDs for oamset are [0 - 127] (common to main and sub)
 
 // sprite IDs
 // Upper screen
@@ -38,7 +38,7 @@
 // 88-94	: long press progress
 // 95	: selection
 
-// for emulator (melonDSで動作確認可)
+// for emulator (Works on melonDS.)
 // #define EMU
 
 // save file name
@@ -73,16 +73,16 @@ static u8 day;
 static u8 week;
 
 #define VOL_MAX 31
-static u8 prev_vol;	// 今の音量を保持する用
+static u8 prev_vol;	// To maintain the current volume
 
-static u8 prev_h;	// 表示のトリガー用
-static u8 prev_m;	// 表示のトリガー用
-static u8 prev_day;	// 表示のトリガー用
-static u8 prev_almIsOn;	// 表示のトリガー用
-static u8 prev_almHour;	// 表示のトリガー用
-static u8 prev_almMin;	// 表示のトリガー用
-static bool prev_snoozeOn;	// 表示のトリガー用
-static u8 prev_snoozeMin;	// 表示のトリガー用
+static u8 prev_h;	// For display triggers
+static u8 prev_m;	// For display triggers
+static u8 prev_day;	// For display triggers
+static u8 prev_almIsOn;	// For display triggers
+static u8 prev_almHour;	// For display triggers
+static u8 prev_almMin;	// For display triggers
+static bool prev_snoozeOn;	// For display triggers
+static u8 prev_snoozeMin;	// For display triggers
 static const char weekStrArr[][4] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
 #define ELEM_MAX 3
@@ -100,7 +100,7 @@ static volatile struct AlarmElem {
 } alm[ELEM_MAX];
 static u8 unsnoozeCounter = 0;
 
-#define SPRITE_DEP 0	// 上画面スプライトの深度
+#define SPRITE_DEP 0	// Depth of sprites on the upper screen
 #define NUM_GFX_OFFSET (64*64/2/2)
 #define SMALL_GFX_OFFSET (16*16/2/2)
 u16* clockGfx;
@@ -112,7 +112,7 @@ u16* buttonGfx;
 u16* smallGfxSub;
 u16* selectionGfxSub;
 int battStartId, battX, battY;
-// マクロでアドレス計算を共通化
+// Use macros to standardize address calculations.
 #define SPRITE_PAL(idx) (SPRITE_PALETTE + ((idx) * 16))
 #define SPRITE_PAL_SUB(idx) (SPRITE_PALETTE_SUB + ((idx) * 16))
 #define BG_PAL(idx) (BG_PALETTE + ((idx) * 16))
@@ -134,12 +134,12 @@ enum BG_PALETTE_SUB_ID {
 	id_ringing_window,
 	id_snooze_window
 };
-// コロンの点滅調整値
+// Colon blinking adjustment value
 #define COLON_ON_TIME 60
 #define COLON_PERIOD 120
 static volatile int colonCounter = 0;
 int startId, startId2;	// alarm & snooze gfx start index
-// 下画面の表示用など
+// For display on the lower screen, etc.
 u16* mapPtr;
 int colSpanY = 56;
 #define TOUCH_AREA_MAX 25
@@ -188,14 +188,14 @@ void almInit(void) {
 	}
 }
 void writeSave(char* fname, void *data, size_t size) {
-	FILE *file = fopen(fname, "wb"); // バイナリ書き込みモード
+	FILE *file = fopen(fname, "wb"); // binary write mode
 	if (file) {
 		fwrite(data, size, 1, file);
 		fclose(file);
 	}
 }
 void loadSave(char* fname, void *data, size_t size) {
-	FILE *file = fopen(fname, "rb"); // バイナリ読み込みモード
+	FILE *file = fopen(fname, "rb"); // binary loading mode
 	if (file) {
 		fread(data, size, 1, file);
 		fclose(file);
@@ -207,13 +207,13 @@ void loadSave(char* fname, void *data, size_t size) {
 inline void drawClockNum(int id, int n, int x, int y)
 {
 	oamSet(&oamMain, 
-		id,               // スプライトID
-		x, y,            // 表示座標
-		SPRITE_DEP,               // 優先度
-		id_n09,               // パレットインデックス
+		id,               // Sprite ID
+		x, y,            // Display coordinates
+		SPRITE_DEP,               // Priority
+		id_n09,               // Palette index
 		SpriteSize_64x64, 
 		SpriteColorFormat_16Color, 
-		clockGfx+n*NUM_GFX_OFFSET,             // 転送したデータの場所
+		clockGfx+n*NUM_GFX_OFFSET,             // Location of transferred data
 		-1, false, false, false, false, false);
 }
 void drawCharSmall(int id, int x, int y, char* str, size_t strLen)
@@ -234,15 +234,15 @@ void drawCharSmall(int id, int x, int y, char* str, size_t strLen)
 		else if ((n=='M')) {sum += 2; span += 1;}
 		else if ((n=='W')) {sum += 2; span += 2;}
 		n -= 48;
-		if ((n<0)) n = 0;	// 最大値も設定する!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		if ((n<0)) n = 0;	// It's also a good idea to set a maximum value.
 		oamSet(&oamMain, 
-			id+i,               // スプライトID
-			x+sum, y,            // 表示座標
-			SPRITE_DEP,               // 優先度
-			id_ascii_small,               // パレットインデックス
+			id+i,               // Sprite ID
+			x+sum, y,            // Display coordinates
+			SPRITE_DEP,               // Priority
+			id_ascii_small,               // Palette index
 			SpriteSize_16x16, 
 			SpriteColorFormat_16Color, 
-			smallGfx+n*SMALL_GFX_OFFSET,             // 転送したデータの場所
+			smallGfx+n*SMALL_GFX_OFFSET,             // Location of transferred data
 			-1, false, false, false, false, false);
 		sum += span;
 	}
@@ -265,15 +265,15 @@ void drawCharSmallSub(int id, int x, int y, char* str, size_t strLen, u8 priorit
 		else if ((n=='M')) {sum += 2; span += 1;}
 		else if ((n=='W')) {sum += 2; span += 2;}
 		n -= 48;
-		if ((n<0)) n = 0;	// 最大値も設定する!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		if ((n<0)) n = 0;	// It's also a good idea to set a maximum value.
 		oamSet(&oamSub, 
-			id+i,               // スプライトID
-			x+sum, y,            // 表示座標
-			priority,               // 優先度
-			id_ascii_small_sub,               // パレットインデックス
+			id+i,               // Sprite ID
+			x+sum, y,            // Display coordinates
+			priority,               // Priority
+			id_ascii_small_sub,               // Palette index
 			SpriteSize_16x16, 
 			SpriteColorFormat_16Color, 
-			smallGfxSub+n*SMALL_GFX_OFFSET,             // 転送したデータの場所
+			smallGfxSub+n*SMALL_GFX_OFFSET,             // Location of transferred data
 			-1, false, false, false, false, false);
 		sum += span;
 	}
@@ -282,13 +282,13 @@ void drawBattStat(u8 statNum)
 {
 	if (statNum == 0) {
 		oamSet(&oamMain, 
-			battStartId+4,               // スプライトID
-			battX, battY,            // 表示座標
-			SPRITE_DEP,               // 優先度
-			id_batt_bg,               // パレットインデックス
+			battStartId+4,               // Sprite ID
+			battX, battY,            // Display coordinates
+			SPRITE_DEP,               // Priority
+			id_batt_bg,               // Palette index
 			SpriteSize_64x32, 
 			SpriteColorFormat_16Color, 
-			battBgGfx,             // 転送したデータの場所
+			battBgGfx,             // Location of transferred data
 			-1, false, false, false, false, false);
 		return;
 	}
@@ -299,13 +299,13 @@ void drawBattStat(u8 statNum)
 			u8 gfxOffset = 128;
 			if (i == 3) {offset = 0; gfxOffset = 0;}
 			oamSet(&oamMain, 
-				battStartId+i,               // スプライトID
-				battX+offset+2, battY,            // 表示座標
-				SPRITE_DEP,               // 優先度
-				id_batt_stat,               // パレットインデックス
+				battStartId+i,               // Sprite ID
+				battX+offset+2, battY,            // Display coordinates
+				SPRITE_DEP,               // Priority
+				id_batt_stat,               // Palette index
 				SpriteSize_16x32, 
 				SpriteColorFormat_16Color, 
-				battStatGfx+gfxOffset,             // 転送したデータの場所
+				battStatGfx+gfxOffset,             // Location of transferred data
 				-1, false, false, false, false, false);
 		} else
 			oamClearSprite(&oamMain, battStartId+i);
@@ -316,17 +316,17 @@ void drawSelection(int x, int y, s16 scale, u8 priority)
 {
 	int matrix_id = 0;
 	oamSet(&oamSub, 
-		SELECTION_SPRITE_ID,               // スプライトID
-		x-16, y-8,            // 表示座標
-		priority,               // 優先度
-		id_selection,               // パレットインデックス
+		SELECTION_SPRITE_ID,               // Sprite ID
+		x-16, y-8,            // Display coordinates
+		priority,               // Priority
+		id_selection,               // Palette index
 		SpriteSize_32x16, 
 		SpriteColorFormat_16Color, 
-		selectionGfxSub,             // 転送したデータの場所
+		selectionGfxSub,             // Location of transferred data
 		matrix_id, true, false, false, false, false);
-	// アフィン行列の計算 scaleが2.0なら、1/2.0 = 0.5。 0.5 * 256 = 128 を設定する
+	// Calculation of the affine matrix (If the scale is 2.0, then 1/2.0 = 0.5. Set 0.5 * 256 = 128.)
 	s16 fixed_scale = (s16)(256.0f / scale);
-	// 行列レジスタに書き込み pa = x軸倍率, pd = y軸倍率, pb/pc = 回転/歪み
+	// Write to matrix register
 	oamAffineTransformation(&oamSub, 
 							matrix_id, 
 							fixed_scale, 0, 
@@ -424,7 +424,7 @@ int main(void) {
 	IPC = &mIPC;
 
 	// send
-	pxiWaitRemote(PxiChannel_User0);	// これは1回だけ呼べばいい
+	pxiWaitRemote(PxiChannel_User0);	// need to call this once.
 	DC_FlushRange(&mIPC, sizeof(mIPC));
 	pxiSendAndReceive(PxiChannel_User0, (u32)IPC);
 
@@ -462,25 +462,25 @@ int main(void) {
 
 	// draw upper screen
 	videoSetMode(MODE_0_2D | DISPLAY_SPR_ACTIVE);
-	// VRAMをスプライト用に設定
+	// Set VRAM for sprites
 	vramSetBankA(VRAM_A_MAIN_SPRITE);
-	// スプライトメモリの初期化
+	// Initialization of sprite memory
 	oamInit(&oamMain, SpriteMapping_1D_128, false);
-	// サブエンジン（下）の設定
+	// Sub-engine (lower screen) settings
 	videoSetModeSub(MODE_0_2D | DISPLAY_SPR_ACTIVE);
 	vramSetBankC(VRAM_C_SUB_BG);
 	vramSetBankD(VRAM_D_SUB_SPRITE);
 	vramSetBankI(VRAM_I_SUB_SPRITE_EXT_PALETTE);
 	oamInit(&oamSub, SpriteMapping_1D_128, false);
-	// VRAMに画像データを転送　allocateの空回しはホントは良くない（前のメモリ配置次第で飛び地になるから）（アドレスを配列などで保持して使うほうが良い）
-	clockGfx = oamAllocateGfx(&oamMain, SpriteSize_64x64, SpriteColorFormat_16Color);	// 64x64の領域11個分確保する（1つ目）
-	for (int i=0;i<10;i++){		// 64x64の領域を残り10個分確保する
+	// Transferring image data to VRAM: It's actually not a good idea to just run `allocate` without any memory allocation (because it can result in isolated memory locations depending on the previous memory layout) (it's better to store the addresses using an array or similar method).
+	clockGfx = oamAllocateGfx(&oamMain, SpriteSize_64x64, SpriteColorFormat_16Color);	// Reserve 11 areas of 64x64 (first area)
+	for (int i=0;i<10;i++){		// Reserve 10 more 64x64 areas.
 		oamAllocateGfx(&oamMain, SpriteSize_64x64, SpriteColorFormat_16Color);
 	}
 	dmaCopy(n09_bkTiles, clockGfx, n09_bkTilesLen);
 	dmaCopy(n09_bkPal, SPRITE_PAL(id_n09), n09_bkPalLen);	
-	smallGfx = oamAllocateGfx(&oamMain, SpriteSize_16x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）
-	for (int i=0;i<42;i++){		// 16x16の領域を残り42個分確保する
+	smallGfx = oamAllocateGfx(&oamMain, SpriteSize_16x16, SpriteColorFormat_16Color);	// Reserve 43 areas of 16x16 (first area)
+	for (int i=0;i<42;i++){		// Reserve 42 more 16x16 areas.
 		oamAllocateGfx(&oamMain, SpriteSize_16x16, SpriteColorFormat_16Color);
 	}
 	dmaCopy(ascii_small_bkTiles, smallGfx, ascii_small_bkTilesLen);
@@ -491,7 +491,7 @@ int main(void) {
 	dmaCopy(batt_bg_bkTiles, battBgGfx, batt_bg_bkTilesLen);
 	dmaCopy(batt_bg_bkPal, SPRITE_PAL(id_batt_bg), batt_bg_bkPalLen);	
 	battStatGfx = oamAllocateGfx(&oamMain, SpriteSize_16x32, SpriteColorFormat_16Color);
-	oamAllocateGfx(&oamMain, SpriteSize_16x32, SpriteColorFormat_16Color);	// 2つあるので空呼び
+	oamAllocateGfx(&oamMain, SpriteSize_16x32, SpriteColorFormat_16Color);	// Since there are two tiles in one image.
 	dmaCopy(batt_stat_bkTiles, battStatGfx, batt_stat_bkTilesLen);
 	dmaCopy(batt_stat_bkPal, SPRITE_PAL(id_batt_stat), batt_stat_bkPalLen);	
 
@@ -504,51 +504,51 @@ int main(void) {
 	u8 battLevel = PM_BATT_LEVEL(pmGetBatteryState());
 	drawBattStat(battLevel);
 
-	// 下画面用のスプライト・背景の準備
+	// Preparing sprites and backgrounds for the lower screen
 
-	// 文字表示用 allocateの空回しはホントは良くない（前のメモリ配置次第で飛び地になるから）（アドレスを配列などで保持して使うほうが良い）
-	smallGfxSub = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）（邪道版）
-	for (int i=0;i<42;i++)		// 16x16の領域を残り42個分確保する
+	// Transferring image data to VRAM: It's actually not a good idea to just run `allocate` without any memory allocation (because it can result in isolated memory locations depending on the previous memory layout) (it's better to store the addresses using an array or similar method).
+	smallGfxSub = oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);	// Reserve 43 areas of 16x16 (first area)
+	for (int i=0;i<42;i++)		// Reserve 42 more 16x16 areas.
 		oamAllocateGfx(&oamSub, SpriteSize_16x16, SpriteColorFormat_16Color);
 	dmaCopy(ascii_small_bkTiles, smallGfxSub, ascii_small_bkTilesLen);
-	dmaCopy(ascii_small_bkPal, SPRITE_PAL_SUB(id_ascii_small_sub), ascii_small_bkPalLen);	// これは共通
-	selectionGfxSub = oamAllocateGfx(&oamSub, SpriteSize_32x16, SpriteColorFormat_16Color);	// 16x16の領域43個分確保する（1つ目）（邪道版）
+	dmaCopy(ascii_small_bkPal, SPRITE_PAL_SUB(id_ascii_small_sub), ascii_small_bkPalLen);
+	selectionGfxSub = oamAllocateGfx(&oamSub, SpriteSize_32x16, SpriteColorFormat_16Color);	// For cursor image
 	dmaCopy(selectionTiles, selectionGfxSub, selectionTilesLen);
-	dmaCopy(selectionPal, SPRITE_PAL_SUB(id_selection), selectionPalLen);	// これは共通
-	// 下画面の背景を表示(レイヤー0(深度ではない))
-	int bg0sub = bgInitSub(0, BgType_Text4bpp, BgSize_T_256x256, 16, 0);	// mapBaseとtileBaseは衝突しないように
+	dmaCopy(selectionPal, SPRITE_PAL_SUB(id_selection), selectionPalLen);
+	// Display the background of the lower screen (Layer 0 (not depth))
+	int bg0sub = bgInitSub(0, BgType_Text4bpp, BgSize_T_256x256, 16, 0);	// mapBase and tileBase should not collide.
 	dmaCopy(lowerBg_bkTiles, bgGetGfxPtr(bg0sub), lowerBg_bkTilesLen);
 	dmaCopy(lowerBg_bkMap, bgGetMapPtr(bg0sub), lowerBg_bkMapLen);
 	dmaCopy(lowerBg_bkPal, BG_PAL_SUB(id_lowerBg), lowerBg_bkPalLen);
-	bgSetPriority(bg0sub, 2);	// 深度を2に
-	// ringing(レイヤー1(深度ではない))
-	int bgRinging = bgInitSub(1, BgType_Text4bpp, BgSize_T_256x256, 17, 1);	// mapBaseとtileBaseは衝突しないように
+	bgSetPriority(bg0sub, 2);	// Set depth to 2
+	// ringing(Layer 1 (not depth))
+	int bgRinging = bgInitSub(1, BgType_Text4bpp, BgSize_T_256x256, 17, 1);	// mapBase and tileBase should not collide.
 	mapPtr = bgGetMapPtr(bgRinging);
 	dmaCopy(ringing_window_bkTiles, bgGetGfxPtr(bgRinging), ringing_window_bkTilesLen);
 	dmaCopy(ringing_window_bkMap, mapPtr, ringing_window_bkMapLen);
 	dmaCopy(ringing_window_bkPal, BG_PAL_SUB(id_ringing_window), ringing_window_bkPalLen);
 	for (int i = 0; i < 32 * 32; i++)
-		mapPtr[i] = (mapPtr[i] & 0x0FFF) | (id_ringing_window << 12); 	// モーダル用マップの各タイルにパレットスロットを指定する
-	bgSetPriority(bgRinging, 0);	// 深度を0に
+		mapPtr[i] = (mapPtr[i] & 0x0FFF) | (id_ringing_window << 12); 	// Assign a palette slot to each tile in the modal map.
+	bgSetPriority(bgRinging, 0);	// Set depth to 0
 	bgHide(bgRinging);
-	// snooze(レイヤー2(深度ではない))
-	int bgSnooze = bgInitSub(2, BgType_Text4bpp, BgSize_T_256x256, 18, 5);	// mapBaseとtileBaseは衝突しないように
+	// snooze(Layer 2 (not depth))
+	int bgSnooze = bgInitSub(2, BgType_Text4bpp, BgSize_T_256x256, 18, 5);	// mapBase and tileBase should not collide.
 	mapPtr = bgGetMapPtr(bgSnooze);
 	dmaCopy(snooze_window_bkTiles, bgGetGfxPtr(bgSnooze), snooze_window_bkTilesLen);
 	dmaCopy(snooze_window_bkMap, mapPtr, snooze_window_bkMapLen);
 	dmaCopy(snooze_window_bkPal, BG_PAL_SUB(id_snooze_window), snooze_window_bkPalLen);
 	for (int i = 0; i < 32 * 32; i++)
-		mapPtr[i] = (mapPtr[i] & 0x0FFF) | (id_snooze_window << 12); 	// モーダル用マップの各タイルにパレットスロットを指定する
-	bgSetPriority(bgSnooze, 0);	// 深度を0に
+		mapPtr[i] = (mapPtr[i] & 0x0FFF) | (id_snooze_window << 12); 	// Assign a palette slot to each tile in the modal map.
+	bgSetPriority(bgSnooze, 0);	// Set depth to 0
 	bgHide(bgSnooze);
 
-	// タッチエリアの設定
+	// Touch area settings
 	u8 ind = 0; u8 mar = 2;
 	// alm ON/OFF, hour inc, hour dec, min inc, min dec, snz ON/OFF, snz min inc, snz min dec
 	u8 touch8X[] = {8,61,61,95,95,135,203,203}, touch8Y[] = {17,8,40,8,40,26,8,40};
 	u8 touch8W[] = {45,15,15,15,15,45,15,15}, touch8H[] = {22,8,8,8,8,22,8,8};
 	for (int i=0;i<ELEM_MAX;i++) {
-		int offsetLowerY = colSpanY*i;	// 何段目か
+		int offsetLowerY = colSpanY*i;	// Calculate which row
 		for (int j=0;j<8;j++) {
 			touchArea[ind].x=touch8X[j]-mar; touchArea[ind].y=touch8Y[j]+offsetLowerY-mar; touchArea[ind].w=touch8W[j]+2*mar; touchArea[ind].h=touch8H[j]+2*mar; ind++;
 		}
@@ -557,7 +557,7 @@ int main(void) {
 
 	int keyWait = 0;
 	int touchWait = 0;
-	sel = -1;	// 選択を解除
+	sel = -1;	// deselect
 
 	while(my_pmMainLoop()) {
 
@@ -635,7 +635,7 @@ int main(void) {
 			IPC->almState = Ringing;
 			DC_FlushRange(&mIPC, sizeof(mIPC));
 			bgShow(bgRinging);
-			sel = -1;	// 選択を解除
+			sel = -1;	// deselect
 		}
 
 		touchRead(&touch);	// read the touchscreen coordinates
@@ -677,7 +677,7 @@ int main(void) {
 					if (temp != VOL_MAX) prev_vol = temp;
 					pxiSendAndReceive(PxiChannel_User0, (WRITE_VOL << MODE_SHIFT_NUM) | prev_vol);	// restore sound volume
 				}
-				// アラームが期限切れかどうか（snooze OFFの場合は常にfalse）
+				// Whether the alarm has expired (always false if snooze is OFF)
 				bool validSnooze = alm[almSel].snoozeOn ? checkValidSnooze(alm[almSel].snoozeMin) : false;
 				if (alm[almSel].snoozeOn && validSnooze) {
 					waitSnooze = true;
@@ -691,7 +691,7 @@ int main(void) {
 				DC_FlushRange(&mIPC, sizeof(mIPC));
 			}
 		}
-		// アラームが何もセットされていないときの警告音を鳴らすのとフラグを立てる
+		// Sound an alarm and flag the alarm if no alarms are set.
 		bool noAlmTemp = true;
 		for (int i=0;i<ELEM_MAX;i++) 
 			if (alm[i].isOn) noAlmTemp = false;
@@ -712,10 +712,10 @@ int main(void) {
 			}
 			swiWaitForVBlank();
 			swiWaitForVBlank();
-			swiWaitForVBlank();		// 画面の乱れを避ける
+			swiWaitForVBlank();		// Avoid screen glitches
 		}
 
-		if (keyWait <= 0) {	// 移動key処理
+		if (keyWait <= 0) {	// Move key processing
 			if (!snoozeHold && !waitSnooze && !(IPC->almState == Ringing)) {
 				if ((down&KEY_RIGHT) || (held&KEY_RIGHT) || (down&KEY_A) || (held&KEY_A)) {
 					sel++;
@@ -755,11 +755,11 @@ int main(void) {
 	#endif
 					keyWait = (selMod == 0) || (selMod == 3) ? keyWaitNum : numModWait;
 				}
-				if ((down&KEY_SELECT)) {sel = -1; keyWait = keyWaitNum;}	// 選択を解除
+				if ((down&KEY_SELECT)) {sel = -1; keyWait = keyWaitNum;}	// deselect
 			}
-			if ((down&KEY_START)) {REG_POWERCNT ^= POWER_SWAP_LCDS; keyWait = keyWaitNum;}	// 上下の表示を入れ替え
+			if ((down&KEY_START)) {REG_POWERCNT ^= POWER_SWAP_LCDS; keyWait = keyWaitNum;}	// Swap the upper and lower displays.
 		}
-		// タッチイベントの処理
+		// Handling touch events
 		if ((down & KEY_TOUCH) && !waitSnooze && (IPC->almState != Ringing))
 			for (int i=0;i<TOUCH_AREA_MAX;i++) {
 				if ((touch.px >= touchArea[i].x)&&(touch.px <= touchArea[i].x+touchArea[i].w)&&
@@ -774,13 +774,13 @@ int main(void) {
 					else if (col == 5) {alm[row].snoozeOn = alm[row].snoozeOn ? 0 : 1; searchNearAlmSend();}
 					else if (col == 6) {alm[row].snoozeMin++;if(alm[row].snoozeMin > SNOOZE_MAX) alm[row].snoozeMin = 1; searchNearAlmSend();}
 					else if (col == 7) {if (alm[row].snoozeMin <= 1) alm[row].snoozeMin = SNOOZE_MAX+1;alm[row].snoozeMin--; searchNearAlmSend();}
-					touchWait = 2*numModWait;	// タッチ後の硬直
+					touchWait = 2*numModWait;	// wait after touch
 #ifndef EMU
 					writeSave(saveFileName, (void *)alm, sizeof(alm));
 #endif
 				}
 			}
-		// タッチ長押し
+		// touch and hold
 		if ((touchWait <= 0) && (held & KEY_TOUCH) && !waitSnooze && (IPC->almState != Ringing))
 			for (int i=0;i<TOUCH_AREA_MAX;i++) {
 				if ((touch.px >= touchArea[i].x)&&(touch.px <= touchArea[i].x+touchArea[i].w)&&
@@ -799,12 +799,12 @@ int main(void) {
 				}
 			}
 
-		// 下画面のアラームの設定表示
+		// Alarm settings display on the lower screen
 		int startLowerId = 51;
 		// (alm ON/OFF, hour, min, snz ON/OFF, snz min)*ELEM_MAX, sound
 		u8 settingX[] = {12,56,90,139,198,70}, settingY[] = {20,20,20,29,20,173};
 		for (int i=0;i<ELEM_MAX;i++) {
-			int offsetLowerY = colSpanY*i;	// 何段目か
+			int offsetLowerY = colSpanY*i;	// Calculate which row
 			sprintf(tempDisp, "%s", alm[i].isOn ? "ON " : "OFF");
 			drawCharSmallSub(startLowerId,settingX[0],settingY[0]+offsetLowerY,tempDisp,strlen(tempDisp),1);	// Alarm ON/OFF text
 			sprintf(tempDisp, "%02i", alm[i].hour);
@@ -826,7 +826,7 @@ int main(void) {
 			u8 selRow = sel/5, selCol = sel%5;
 			if (selRow == 3) drawSelection(settingX[5]-6,settingY[5],1,1);	// sound
 			else {
-				int offsetLowerY = colSpanY*selRow;	// 何段目か
+				int offsetLowerY = colSpanY*selRow;	// Calculate which row
 				if ((selCol == 0) || (selCol == 3))
 					drawSelection(settingX[selCol]+selButtonOffsetX,settingY[selCol]+selButtonOffsetY+offsetLowerY,2,1);	// alm ON/OFF, snz ON/OFF
 				if ((selCol == 1) || (selCol == 2) || (selCol == 4))
@@ -834,8 +834,8 @@ int main(void) {
 			}
 		} else if (sel == -1) oamClearSprite(&oamSub, SELECTION_SPRITE_ID);
 
-		oamUpdate(&oamMain); // VBlank時に描画情報を更新
-		oamUpdate(&oamSub); // VBlank時に描画情報を更新
+		oamUpdate(&oamMain); // Update drawing information during VBlank.
+		oamUpdate(&oamSub); // Update drawing information during VBlank.
 
 		colonCounter++;
 		if (colonCounter >= COLON_PERIOD) colonCounter = 0;
