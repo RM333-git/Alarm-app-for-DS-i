@@ -41,7 +41,7 @@ static volatile bool rtcFlag = false;
 
 void RtcCallback()
 {
-	// 割込み処理は最小限に
+	// Minimize processing during interrupts.
 	rtcFlag = true;
 }
 
